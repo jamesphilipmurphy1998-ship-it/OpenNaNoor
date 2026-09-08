@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">OpenNaNoor</string>
+    <string name="accessibility_description">Lets OpenNaNoor see which app is currently in the foreground, so per-app interface rules can be applied. No screen content is read or stored.</string>
 </resources>
