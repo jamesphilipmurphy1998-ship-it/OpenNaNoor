@@ -42,6 +42,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -74,8 +75,8 @@ fun LauncherScreen(
     onDrawerOpenChange: (Boolean) -> Unit,
     editing: Boolean,
     onEditingChange: (Boolean) -> Unit,
-    onMove: (from: HomeLocation, to: HomeLocation) -> Unit,
-    onPlaceFromDrawer: (entry: LauncherEntry, to: HomeLocation) -> Unit,
+    onMove: (from: HomeLocation, to: HomeLocation, fold: Boolean) -> Unit,
+    onPlaceFromDrawer: (entry: LauncherEntry, to: HomeLocation, fold: Boolean) -> Unit,
     onRemove: (page: Int, slot: Int) -> Unit,
     onOpenFolder: (String) -> Unit,
     onCloseFolder: () -> Unit,
@@ -140,6 +141,21 @@ fun LauncherScreen(
             drag.overDock = dockBounds?.contains(center) == true
             drag.overRemoveZone = editing && removeZoneBounds?.contains(center) == true
 
+            // Track the occupied slot under the finger. Resting on one long
+            // enough arms a folder; moving to a different slot disarms it.
+            val hovered = if (drag.overDock || drag.overRemoveZone) null else {
+                val slot = slotAt(drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns)
+                val page = state.pages.getOrNull(pagerState.currentPage)
+                val candidate = HomeLocation.Page(pagerState.currentPage, slot)
+                if (page != null && slot in page.indices && candidate != drag.origin) {
+                    candidate
+                } else null
+            }
+            if (hovered != drag.hoverTarget) {
+                drag.hoverTarget = hovered
+                drag.folderArmed = false
+            }
+
             // Dragging out of the drawer reveals the home screen underneath it
             // so there is somewhere visible to drop onto.
             if (drag.fromDrawer && drawerOpen) onDrawerOpenChange(false)
@@ -180,20 +196,29 @@ fun LauncherScreen(
                         drag.end()
                         return
                     }
-                    else -> {
-                        val column = (drag.position.x / cellWidthPx).toInt()
-                            .coerceIn(0, state.columns - 1)
-                        val row = ((drag.position.y - topPaddingPx) / cellHeightPx).toInt()
-                            .coerceAtLeast(0)
-                        HomeLocation.Page(pagerState.currentPage, row * state.columns + column)
-                    }
+                    else -> HomeLocation.Page(
+                        pagerState.currentPage,
+                        slotAt(drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns)
+                    )
                 }
 
+                // Only a drop that dwelled over this exact slot folds into it.
+                val fold = drag.folderArmed && drag.hoverTarget == target
                 val origin = drag.origin
-                if (origin != null) onMove(origin, target)
-                else if (item is HomeItem.AppItem) onPlaceFromDrawer(item.entry, target)
+                if (origin != null) onMove(origin, target, fold)
+                else if (item is HomeItem.AppItem) onPlaceFromDrawer(item.entry, target, fold)
             }
             drag.end()
+        }
+
+        // Resting over one slot for this long arms the folder merge, and
+        // shows it by swelling the target tile.
+        LaunchedEffect(drag.hoverTarget) {
+            val target = drag.hoverTarget
+            if (target != null) {
+                kotlinx.coroutines.delay(FOLDER_DWELL_MS)
+                if (drag.hoverTarget == target) drag.folderArmed = true
+            }
         }
 
         Column(Modifier.fillMaxSize()) {
@@ -214,6 +239,10 @@ fun LauncherScreen(
                 HomePage(
                     items = state.pages.getOrNull(pageIndex).orEmpty(),
                     pageIndex = pageIndex,
+                    folderTargetSlot = drag.hoverTarget
+                        ?.let { it as? HomeLocation.Page }
+                        ?.takeIf { it.page == pageIndex && drag.folderArmed }
+                        ?.slot,
                     columns = state.columns,
                     rows = HomeLayout.ROWS_PER_PAGE,
                     editing = editing,
@@ -300,12 +329,25 @@ fun LauncherScreen(
         }
 
         state.openFolder?.let { folder ->
+            val draggingOutOfThis = drag.active && drag.origin.let {
+                it is HomeLocation.Folder && it.folderId == folder.folderId
+            }
             FolderOverlay(
                 folder = folder,
                 insets = insets,
+                dimmed = draggingOutOfThis,
                 onLaunch = onLaunchApp,
                 onDismiss = onCloseFolder,
-                onRemoveItem = { componentId -> onRemoveFromFolder(folder.folderId, componentId) }
+                onRemoveItem = { componentId -> onRemoveFromFolder(folder.folderId, componentId) },
+                drag = drag,
+                outerOrigin = outerOrigin,
+                onDragMoved = ::handleDragMoved,
+                // Left open rather than auto-closed: the folder still shows,
+                // now one member lighter, and the user dismisses it deliberately.
+                // Auto-closing exactly on drag-end would need this callback to
+                // see live drag state from inside an already-running gesture,
+                // which Compose does not reliably propagate mid-drag.
+                onDragEnded = ::handleDragEnded
             )
         }
 
@@ -372,7 +414,7 @@ private fun Dock(
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 if (!isDragOrigin) {
                     Box(
-                        Modifier.pointerInput(items, index) {
+                        Modifier.pointerInput(index) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { offset ->
                                     onEnterEditing()
@@ -496,21 +538,35 @@ private fun AppDrawer(
     }
 }
 
-/** Full-screen view of one folder's contents, with the same jiggle-and-remove. */
+/**
+ * Full-screen view of one folder's contents. Tap to launch; long-press to
+ * jiggle, with a badge to pull an app out without going anywhere; or hold
+ * and drag an icon past the folder to place it back on the home screen -
+ * the same [DragCoordinator] the home pages use, so dropping it resolves
+ * exactly the same way a page-to-page drag does. The folder fades rather
+ * than closes while that drag is in flight, so the home screen underneath
+ * is visible to drop onto without cancelling the gesture.
+ */
 @Composable
 private fun FolderOverlay(
     folder: HomeItem.FolderItem,
     insets: PaddingValues,
+    dimmed: Boolean,
     onLaunch: (LaunchableApp) -> Unit,
     onDismiss: () -> Unit,
-    onRemoveItem: (componentId: String) -> Unit
+    onRemoveItem: (componentId: String) -> Unit,
+    drag: DragCoordinator,
+    outerOrigin: Offset,
+    onDragMoved: (Offset) -> Unit,
+    onDragEnded: () -> Unit
 ) {
     var editing by remember { mutableStateOf(false) }
+    val scrimAlpha = if (dimmed) 0.1f else 0.94f
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.94f))
+            .background(Color.Black.copy(alpha = scrimAlpha))
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
@@ -525,7 +581,7 @@ private fun FolderOverlay(
             Text(
                 text = folder.name,
                 style = MaterialTheme.typography.titleLarge,
-                color = Color.White,
+                color = Color.White.copy(alpha = if (dimmed) 0f else 1f),
                 modifier = Modifier.padding(bottom = 20.dp)
             )
 
@@ -535,32 +591,73 @@ private fun FolderOverlay(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(folder.items, key = { it.id }) { appItem ->
-                    Box {
-                        HomeItemTile(
-                            item = appItem,
-                            onClick = {
-                                if (editing) editing = false
-                                else {
-                                    onDismiss()
-                                    onLaunch(appItem.entry.app)
-                                }
-                            },
-                            onLongClick = { editing = true },
-                            wobble = editing
-                        )
-                        if (editing) {
-                            RemoveBadge(
+                    val componentId = appItem.entry.app.component.flattenToString()
+                    val isDragOrigin = drag.active && drag.origin.let {
+                        it is HomeLocation.Folder && it.componentId == componentId &&
+                            it.folderId == folder.folderId
+                    }
+                    var tileWindowPos by remember(appItem.id) { mutableStateOf(Offset.Zero) }
+
+                    Box(
+                        Modifier
+                            .onGloballyPositioned { tileWindowPos = it.positionInWindow() }
+                            .pointerInput(appItem.id) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { localOffset ->
+                                        editing = true
+                                        drag.start(
+                                            item = appItem,
+                                            origin = HomeLocation.Folder(folder.folderId, componentId),
+                                            startPosition = tileWindowPos - outerOrigin + localOffset
+                                        )
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        onDragMoved(amount)
+                                    },
+                                    onDragEnd = onDragEnded,
+                                    onDragCancel = onDragEnded
+                                )
+                            }
+                    ) {
+                        if (!isDragOrigin) {
+                            HomeItemTile(
+                                item = appItem,
                                 onClick = {
-                                    onRemoveItem(appItem.entry.app.component.flattenToString())
+                                    if (editing) editing = false
+                                    else {
+                                        onDismiss()
+                                        onLaunch(appItem.entry.app)
+                                    }
                                 },
-                                modifier = Modifier.align(Alignment.TopStart)
+                                wobble = editing
                             )
+                            if (editing) {
+                                RemoveBadge(
+                                    onClick = { onRemoveItem(componentId) },
+                                    modifier = Modifier.align(Alignment.TopStart)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+/** Which grid slot a drag position falls on, in the page's own coordinates. */
+private fun slotAt(
+    position: Offset,
+    cellWidthPx: Float,
+    cellHeightPx: Float,
+    topPaddingPx: Float,
+    columns: Int
+): Int {
+    val centre = position + Offset(cellWidthPx / 2f, cellHeightPx / 2f)
+    val column = (centre.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
+    val row = ((centre.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
+    return row * columns + column
 }
 
 /** Applies pointer input handling only when [condition] is true. */
@@ -573,6 +670,7 @@ private fun Modifier.pointerInputIf(
 private const val DRAWER_DRAG_THRESHOLD = 18f
 private const val EDGE_MARGIN_PX = 60f
 private const val EDGE_ADVANCE_COOLDOWN_MS = 450L
+private const val FOLDER_DWELL_MS = 1000L
 private val DOCK_AREA_HEIGHT = 96.dp
 private val GHOST_SIZE = 72.dp
 private const val GHOST_SCALE = 1.12f

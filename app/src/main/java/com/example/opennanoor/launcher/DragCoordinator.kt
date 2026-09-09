@@ -25,6 +25,20 @@ class DragCoordinator {
     var overDock by mutableStateOf(false)
     var overRemoveZone by mutableStateOf(false)
 
+    /**
+     * The occupied slot the finger is currently resting over, if any. Set
+     * only for a slot that already holds something and isn't where the drag
+     * began - the two cases where dwelling could form a folder.
+     */
+    var hoverTarget by mutableStateOf<HomeLocation?>(null)
+
+    /**
+     * True once the finger has rested over [hoverTarget] long enough that
+     * releasing there should merge into a folder rather than push the other
+     * icons aside. Cleared whenever the finger moves to a different slot.
+     */
+    var folderArmed by mutableStateOf(false)
+
     val active: Boolean get() = item != null
 
     /** True when this drag began in the drawer rather than on a home slot. */
@@ -34,6 +48,8 @@ class DragCoordinator {
         this.item = item
         this.origin = origin
         this.position = startPosition
+        this.hoverTarget = null
+        this.folderArmed = false
     }
 
     fun moveBy(delta: Offset) {
@@ -45,5 +61,7 @@ class DragCoordinator {
         origin = null
         overDock = false
         overRemoveZone = false
+        hoverTarget = null
+        folderArmed = false
     }
 }

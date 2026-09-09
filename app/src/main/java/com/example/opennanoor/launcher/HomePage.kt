@@ -1,6 +1,7 @@
 package com.example.opennanoor.launcher
 
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
@@ -17,11 +18,13 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -45,6 +48,8 @@ fun HomePage(
     columns: Int,
     rows: Int,
     editing: Boolean,
+    /** Slot on this page that a dwelling drag has armed for a folder merge. */
+    folderTargetSlot: Int?,
     topPadding: Dp,
     drag: DragCoordinator,
     onLaunch: (HomeItem) -> Unit,
@@ -76,7 +81,12 @@ fun HomePage(
                 Modifier
                     .size(cellWidth, cellHeight)
                     .offset { androidx.compose.ui.unit.IntOffset(baseX.toInt(), baseY.toInt()) }
-                    .pointerInput(items, editing, slot, pageIndex) {
+                    // Keyed only on this cell's identity. Keying on `editing`
+                    // or on the page's item list tore the gesture detector down
+                    // and restarted it the instant a drag began - editing flips
+                    // true inside onDragStart - which killed the drag before a
+                    // single move event landed.
+                    .pointerInput(pageIndex, slot) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 onEnterEditing()
@@ -95,12 +105,36 @@ fun HomePage(
                         )
                     }
             ) {
-                HomeItemTile(
-                    item = item,
-                    onClick = { if (!editing) onLaunch(item) },
-                    wobble = editing,
-                    wobbleSeed = slot
+                // A tile armed as a folder target swells and lights up, the
+                // way iOS shows that letting go here will make a folder.
+                val armed = folderTargetSlot == slot
+                val armedScale by animateFloatAsState(
+                    targetValue = if (armed) 1.28f else 1f,
+                    label = "folderTargetScale"
                 )
+
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .scale(armedScale),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (armed) {
+                        Box(
+                            Modifier
+                                .size(58.dp)
+                                .align(Alignment.TopCenter)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White.copy(alpha = 0.25f))
+                        )
+                    }
+                    HomeItemTile(
+                        item = item,
+                        onClick = { if (!editing) onLaunch(item) },
+                        wobble = editing && !armed,
+                        wobbleSeed = slot
+                    )
+                }
                 if (editing) {
                     RemoveBadge(
                         onClick = { onRemove(slot) },

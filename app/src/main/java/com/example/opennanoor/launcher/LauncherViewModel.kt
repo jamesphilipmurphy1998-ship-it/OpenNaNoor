@@ -18,6 +18,8 @@ import kotlinx.coroutines.withContext
 sealed class HomeLocation {
     data class Page(val page: Int, val slot: Int) : HomeLocation()
     data class Dock(val slot: Int) : HomeLocation()
+    /** One app inside an open folder, addressed by the folder and its component. */
+    data class Folder(val folderId: String, val componentId: String) : HomeLocation()
 }
 
 data class LauncherUiState(
@@ -148,25 +150,27 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * rather than silently overflowing; the dock, fixed at four slots, clamps
      * to its last slot instead.
      */
-    fun moveItem(from: HomeLocation, to: HomeLocation) {
+    fun moveItem(from: HomeLocation, to: HomeLocation, fold: Boolean = false) {
         val current = _state.value
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
 
-        fun listFor(location: HomeLocation): MutableList<HomeItem>? = when (location) {
-            is HomeLocation.Page -> pagesWorking.getOrNull(location.page)
-            is HomeLocation.Dock -> dockWorking
+        val sourceItem: HomeItem = when (from) {
+            is HomeLocation.Page -> {
+                val list = pagesWorking.getOrNull(from.page) ?: return
+                if (from.slot !in list.indices) return
+                list.removeAt(from.slot)
+            }
+            is HomeLocation.Dock -> {
+                if (from.slot !in dockWorking.indices) return
+                dockWorking.removeAt(from.slot)
+            }
+            is HomeLocation.Folder ->
+                extractFromFolder(from.folderId, from.componentId, pagesWorking, dockWorking)
+                    ?: return
         }
 
-        val sourceList = listFor(from) ?: return
-        val sourceIndex = when (from) {
-            is HomeLocation.Page -> from.slot
-            is HomeLocation.Dock -> from.slot
-        }
-        if (sourceIndex !in sourceList.indices) return
-        val sourceItem = sourceList.removeAt(sourceIndex)
-
-        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns)
+        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, fold)
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
             page.isNotEmpty() || pagesWorking.size == 1
@@ -174,6 +178,36 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         _state.value = current.copy(pages = finalPages, dock = dockWorking)
         persist(finalPages, dockWorking)
+    }
+
+    /**
+     * Pulls one app out of whichever folder holds it (searching pages, then
+     * the dock) and returns it, leaving the folder behind with one fewer
+     * member - dissolved back to a plain app tile if that leaves just one,
+     * removed entirely if that empties it out.
+     */
+    private fun extractFromFolder(
+        folderId: String,
+        componentId: String,
+        pagesWorking: MutableList<MutableList<HomeItem>>,
+        dockWorking: MutableList<HomeItem>
+    ): HomeItem.AppItem? {
+        fun tryList(list: MutableList<HomeItem>): HomeItem.AppItem? {
+            val index = list.indexOfFirst { it is HomeItem.FolderItem && it.folderId == folderId }
+            if (index == -1) return null
+            val folder = list[index] as HomeItem.FolderItem
+            val extracted = folder.items.firstOrNull { it.id == "app:$componentId" } ?: return null
+            val remaining = folder.items - extracted
+            list[index] = when {
+                remaining.isEmpty() -> return extracted.also { list.removeAt(index) }
+                remaining.size == 1 -> remaining.first()
+                else -> folder.copy(items = remaining)
+            }
+            return extracted
+        }
+
+        pagesWorking.forEach { page -> tryList(page)?.let { return it } }
+        return tryList(dockWorking)
     }
 
     /**
@@ -188,13 +222,18 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         to: HomeLocation,
         pagesWorking: MutableList<MutableList<HomeItem>>,
         dockWorking: MutableList<HomeItem>,
-        columns: Int
+        columns: Int,
+        fold: Boolean
     ) {
         val capacity = columns * HomeLayout.ROWS_PER_PAGE
 
+        // A folder is never a drop destination in its own right - dropping
+        // onto a folder is resolved below by finding it as the occupant of a
+        // page or dock slot.
         fun listFor(location: HomeLocation): MutableList<HomeItem>? = when (location) {
             is HomeLocation.Page -> pagesWorking.getOrNull(location.page)
             is HomeLocation.Dock -> dockWorking
+            is HomeLocation.Folder -> null
         }
 
         var destination = to
@@ -211,17 +250,23 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
 
-        val insertIndex = when (destination) {
-            is HomeLocation.Page -> destination.slot.coerceIn(0, targetList.size)
-            is HomeLocation.Dock -> destination.slot.coerceIn(
+        val insertIndex = when (val target = destination) {
+            is HomeLocation.Page -> target.slot.coerceIn(0, targetList.size)
+            is HomeLocation.Dock -> target.slot.coerceIn(
                 0,
                 minOf(targetList.size, HomeLayout.DOCK_SIZE - 1)
             )
+            is HomeLocation.Folder -> targetList.size
         }
 
         val occupant = targetList.getOrNull(insertIndex)
         when {
             occupant == null -> targetList.add(insertIndex, item)
+
+            // Merging only happens when the drag dwelled over this slot long
+            // enough to arm it. Otherwise the drop inserts here and pushes the
+            // other icons along, which is what a quick drag past them means.
+            !fold -> targetList.add(insertIndex, item)
 
             occupant is HomeItem.FolderItem && item is HomeItem.AppItem ->
                 targetList[insertIndex] = occupant.copy(items = occupant.items + item)
@@ -242,7 +287,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * same occupant/folder-create rules as [moveItem] - there is just no
      * source location to remove it from first.
      */
-    fun placeFromDrawer(entry: LauncherEntry, to: HomeLocation) {
+    fun placeFromDrawer(entry: LauncherEntry, to: HomeLocation, fold: Boolean = false) {
         val current = _state.value
         val already = (current.pages.flatten() + current.dock).any { item ->
             when (item) {
@@ -256,7 +301,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
-        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns)
+        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, fold)
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
         _state.value = current.copy(pages = finalPages, dock = dockWorking)
