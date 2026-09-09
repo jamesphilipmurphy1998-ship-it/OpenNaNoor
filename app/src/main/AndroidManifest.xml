@@ -40,7 +40,7 @@
             android:launchMode="singleTask"
             android:stateNotNeeded="true"
             android:excludeFromRecents="true"
-            android:theme="@style/Theme.OpenNaNoor"
+            android:theme="@style/Theme.OpenNaNoor.Launcher"
             android:windowSoftInputMode="adjustPan">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

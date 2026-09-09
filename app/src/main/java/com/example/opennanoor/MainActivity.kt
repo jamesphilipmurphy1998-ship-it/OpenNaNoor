@@ -22,6 +22,7 @@ import com.example.opennanoor.core.Feature
 import com.example.opennanoor.core.FeatureCatalog
 import com.example.opennanoor.core.Permissions
 import com.example.opennanoor.core.Settings
+import com.example.opennanoor.launcher.IconPack
 import com.example.opennanoor.core.Requirement
 import com.example.opennanoor.service.AppMonitorService
 import com.example.opennanoor.service.TintOverlayService
@@ -92,7 +93,7 @@ class MainActivity : ComponentActivity() {
 
     private fun toggle(feature: Feature, on: Boolean) {
         when (feature.id) {
-            FeatureCatalog.ID_IOS_ICONS -> Settings(this).iosIconStyle = on
+            FeatureCatalog.ID_IOS_ICONS -> setIosLook(on)
 
             FeatureCatalog.ID_TINT ->
                 if (on) TintOverlayService.start(this, TINT_COLOR)
@@ -102,6 +103,32 @@ class MainActivity : ComponentActivity() {
             FeatureCatalog.ID_APP_MONITOR ->
                 startActivity(Permissions.accessibilitySettingsIntent())
         }
+    }
+
+    /**
+     * The iOS look is one switch to the user, so it drives both halves: the
+     * squircle shape, and an icon pack to supply Apple-style artwork. An
+     * explicit pack choice made in the launcher's own menu is left alone.
+     */
+    private fun setIosLook(on: Boolean) {
+        val settings = Settings(this)
+        settings.iosIconStyle = on
+
+        if (on) {
+            if (settings.iconPackPackage == null) {
+                settings.iconPackPackage = preferredIosPack()
+            }
+        } else {
+            settings.iconPackPackage = null
+        }
+    }
+
+    /** iPear if it's installed, otherwise whatever pack is, otherwise none. */
+    private fun preferredIosPack(): String? {
+        val packs = IconPack.installedPacks(this)
+        return packs.firstOrNull { it.packageName == IPEAR }?.packageName
+            ?: packs.firstOrNull { it.label.contains("ios", ignoreCase = true) }?.packageName
+            ?: packs.firstOrNull()?.packageName
     }
 
     private fun openSettingsFor(requirement: Requirement) {
@@ -115,6 +142,9 @@ class MainActivity : ComponentActivity() {
     companion object {
         /** Warm amber at low alpha - visible but not obstructive. */
         private const val TINT_COLOR = 0x33FF9500
+
+        /** The iOS-style pack this app suggests first when one is installed. */
+        private const val IPEAR = "com.eatos.ipux"
     }
 }
 

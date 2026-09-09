@@ -1,57 +1,64 @@
 package com.example.opennanoor.launcher
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.opennanoor.core.Settings
 import com.example.opennanoor.ui.theme.OpenNaNoorTheme
 
 /**
  * The home screen. Declared with CATEGORY_HOME so Android offers it as a
- * launcher choice - it only takes over if the user picks it as default.
+ * launcher choice - it only takes over once the user picks it as default.
  */
 class LauncherActivity : ComponentActivity() {
+
+    /** Set when the system delivers a HOME press while we are already showing. */
+    private var homePressed by mutableStateOf(0)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        val settings = Settings(this)
-
         setContent {
             OpenNaNoorTheme {
                 val vm: LauncherViewModel = viewModel()
                 val state by vm.state.collectAsState()
+                var drawerOpen by remember { mutableStateOf(false) }
+
+                // Pressing home while the drawer is open closes it, as it would
+                // on any stock launcher.
+                remember(homePressed) {
+                    drawerOpen = false
+                    homePressed
+                }
+
+                BackHandler(enabled = drawerOpen) { drawerOpen = false }
 
                 LauncherScreen(
                     state = state,
-                    columns = settings.columns,
                     onLaunch = { AppRepository.launch(this, it.component) },
                     onSelectPack = vm::selectIconPack,
                     onToggleIosStyle = vm::setIosStyle,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color(0xFF101014), Color(0xFF1C1C24))
-                            )
-                        )
+                    drawerOpen = drawerOpen,
+                    onDrawerOpenChange = { drawerOpen = it },
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
     }
 
-    /** Home is always "already there" - pressing home should not restart it. */
-    override fun onNewIntent(intent: android.content.Intent) {
+    override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        homePressed++
     }
 }

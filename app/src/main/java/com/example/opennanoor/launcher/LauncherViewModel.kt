@@ -1,6 +1,7 @@
 package com.example.opennanoor.launcher
 
 import android.app.Application
+import android.content.ComponentName
 import android.graphics.drawable.Drawable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -19,10 +20,13 @@ data class LauncherEntry(
 )
 
 data class LauncherUiState(
-    val entries: List<LauncherEntry> = emptyList(),
+    val pages: List<List<LauncherEntry>> = emptyList(),
+    val dock: List<LauncherEntry> = emptyList(),
+    val allApps: List<LauncherEntry> = emptyList(),
     val availablePacks: List<IconPackInfo> = emptyList(),
     val activePack: String? = null,
     val iosStyle: Boolean = false,
+    val columns: Int = 4,
     val loading: Boolean = true
 )
 
@@ -42,27 +46,52 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             val context = getApplication<Application>()
             val packChoice = settings.iconPackPackage
             val ios = settings.iosIconStyle
+            val columns = settings.columns
 
-            val loaded = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 val apps = AppRepository.installedApps(context)
                 val packs = IconPack.installedPacks(context)
                 val pack = packChoice?.let { IconPack.load(context, it) }
 
-                val entries = apps.map { app ->
+                val byComponent = apps.associateBy { it.component }
+                val icons = apps.associate { app ->
                     val themed = pack?.iconFor(app.component, app.rawIcon, ICON_PX)
                         ?: app.rawIcon
-                    // The squircle runs last so it shapes pack art too.
+                    // The squircle runs last, so it shapes pack artwork too.
                     val finished = if (ios) SquircleIcons.apply(themed, ICON_PX) else themed
-                    LauncherEntry(app, finished)
+                    app.component to LauncherEntry(app, finished)
                 }
-                Triple(entries, packs, pack != null)
+
+                val layout = HomeLayout.load(context, byComponent.keys)
+                    ?: HomeLayout.default(apps, columns).also {
+                        HomeLayout.save(context, it)
+                    }
+
+                // Apps installed since the layout was written land on a new page
+                // rather than silently disappearing.
+                val placed = (layout.pages.flatten() + layout.dock).toSet()
+                val unplaced = apps.map { it.component }.filterNot { it in placed }
+                val pages = layout.pages + unplaced
+                    .chunked(columns * HomeLayout.ROWS_PER_PAGE)
+                    .filter { it.isNotEmpty() }
+
+                Loaded(
+                    pages = pages.map { page -> page.mapNotNull(icons::get) },
+                    dock = layout.dock.mapNotNull(icons::get),
+                    allApps = apps.mapNotNull { icons[it.component] },
+                    packs = packs,
+                    packActive = pack != null
+                )
             }
 
             _state.value = LauncherUiState(
-                entries = loaded.first,
-                availablePacks = loaded.second,
-                activePack = packChoice.takeIf { loaded.third },
+                pages = result.pages,
+                dock = result.dock,
+                allApps = result.allApps,
+                availablePacks = result.packs,
+                activePack = packChoice.takeIf { result.packActive },
                 iosStyle = ios,
+                columns = columns,
                 loading = false
             )
         }
@@ -78,8 +107,16 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    private data class Loaded(
+        val pages: List<List<LauncherEntry>>,
+        val dock: List<LauncherEntry>,
+        val allApps: List<LauncherEntry>,
+        val packs: List<IconPackInfo>,
+        val packActive: Boolean
+    )
+
     private companion object {
-        /** Render size for composited icons. Generous so they stay sharp. */
+        /** Render size for icons. Generous so they stay sharp when scaled. */
         const val ICON_PX = 192
     }
 }

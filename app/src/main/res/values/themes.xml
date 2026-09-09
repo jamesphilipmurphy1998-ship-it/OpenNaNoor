@@ -2,4 +2,16 @@
 <resources>
 
     <style name="Theme.OpenNaNoor" parent="android:Theme.Material.Light.NoActionBar" />
+
+    <!--
+      The home screen sits on top of the system wallpaper rather than painting
+      its own background, which is what makes it feel like a home screen and
+      not an app that happens to list icons.
+    -->
+    <style name="Theme.OpenNaNoor.Launcher" parent="Theme.OpenNaNoor">
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>
