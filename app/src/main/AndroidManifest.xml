@@ -38,6 +38,7 @@
             android:exported="true"
             android:label="OpenNaNoor Home"
             android:launchMode="singleTask"
+            android:taskAffinity=""
             android:stateNotNeeded="true"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.OpenNaNoor.Launcher"

@@ -206,6 +206,12 @@ private fun FeatureCard(
                     TextButton(onClick = onGrant) { Text("Grant") }
                 }
 
+                feature.requirement == Requirement.NONE -> Text(
+                    text = "Ready",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.outline
+                )
+
                 else -> Text(
                     text = feature.requirement.label + " granted",
                     style = MaterialTheme.typography.labelMedium,

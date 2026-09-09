@@ -57,9 +57,7 @@ class LauncherActivity : ComponentActivity() {
                 LauncherScreen(
                     state = state,
                     onLaunch = { AppRepository.launch(this, it.component) },
-                    onOpenSettings = {
-                        startActivity(Intent(this, MainActivity::class.java))
-                    },
+                    onOpenSettings = { openSettings() },
                     drawerOpen = drawerOpen,
                     onDrawerOpenChange = { drawerOpen = it },
                     editing = editing,
@@ -69,6 +67,14 @@ class LauncherActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /** Settings must start in its own task, since ours is the home task. */
+    private fun openSettings() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
     override fun onNewIntent(intent: Intent) {
