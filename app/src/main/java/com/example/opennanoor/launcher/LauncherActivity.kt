@@ -63,6 +63,8 @@ class LauncherActivity : ComponentActivity() {
                     editing = editing,
                     onEditingChange = { editing = it },
                     onMove = vm::moveApp,
+                    onRemove = vm::removeFromHome,
+                    onAddToHome = vm::addToHome,
                     modifier = Modifier.fillMaxSize()
                 )
             }

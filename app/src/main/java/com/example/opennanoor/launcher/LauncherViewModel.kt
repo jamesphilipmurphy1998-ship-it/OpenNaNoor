@@ -135,6 +135,46 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         persist(pages, current.dock)
     }
 
+    /**
+     * Puts an app on the home screen if it isn't already there, filling the
+     * first page with a free slot rather than always appending to the end.
+     */
+    fun addToHome(entry: LauncherEntry) {
+        val current = _state.value
+        val alreadyPlaced = current.pages.any { page ->
+            page.any { it.app.component == entry.app.component }
+        } || current.dock.any { it.app.component == entry.app.component }
+        if (alreadyPlaced) return
+
+        val capacity = current.columns * HomeLayout.ROWS_PER_PAGE
+        val pages = current.pages.toMutableList()
+        val target = pages.indexOfFirst { it.size < capacity }
+
+        if (target >= 0) {
+            pages[target] = pages[target] + entry
+        } else {
+            pages.add(listOf(entry))
+        }
+
+        _state.value = current.copy(pages = pages)
+        persist(pages, current.dock)
+    }
+
+    /** Takes an app off the home screen. It stays installed and in the drawer. */
+    fun removeFromHome(pageIndex: Int, slot: Int) {
+        val current = _state.value
+        val page = current.pages.getOrNull(pageIndex) ?: return
+        if (slot !in page.indices) return
+
+        val pages = current.pages.toMutableList()
+        pages[pageIndex] = page.toMutableList().apply { removeAt(slot) }
+        // Drop a page that just emptied, unless it is the only one left.
+        if (pages[pageIndex].isEmpty() && pages.size > 1) pages.removeAt(pageIndex)
+
+        _state.value = current.copy(pages = pages)
+        persist(pages, current.dock)
+    }
+
     private fun persist(
         pages: List<List<LauncherEntry>>,
         dock: List<LauncherEntry>

@@ -8,10 +8,15 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -19,7 +24,11 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
@@ -47,6 +56,7 @@ fun HomePage(
     onLaunch: (LaunchableApp) -> Unit,
     onEnterEditing: () -> Unit,
     onMove: (from: Int, to: Int) -> Unit,
+    onRemove: (slot: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -117,8 +127,34 @@ fun HomePage(
                     wobble = editing && !isDragging,
                     wobbleSeed = slot
                 )
+                if (editing && !isDragging) {
+                    RemoveBadge(
+                        onClick = { onRemove(slot) },
+                        modifier = Modifier.align(Alignment.TopStart)
+                    )
+                }
             }
         }
+    }
+}
+
+/** The small circled minus that takes an app off the home screen. */
+@Composable
+private fun RemoveBadge(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .padding(start = 18.dp, top = 2.dp)
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF3A3A3C))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            Modifier
+                .size(width = 11.dp, height = 2.dp)
+                .background(Color.White)
+        )
     }
 }
 

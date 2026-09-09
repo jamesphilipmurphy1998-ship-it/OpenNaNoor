@@ -7,7 +7,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -69,6 +71,8 @@ fun LauncherScreen(
     editing: Boolean,
     onEditingChange: (Boolean) -> Unit,
     onMove: (page: Int, from: Int, to: Int) -> Unit,
+    onRemove: (page: Int, slot: Int) -> Unit,
+    onAddToHome: (LauncherEntry) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -87,7 +91,8 @@ fun LauncherScreen(
             onOpenSettings = onOpenSettings,
             editing = editing,
             onEditingChange = onEditingChange,
-            onMove = onMove
+            onMove = onMove,
+            onRemove = onRemove
         )
 
         AnimatedVisibility(
@@ -101,6 +106,10 @@ fun LauncherScreen(
                 onLaunch = {
                     onDrawerOpenChange(false)
                     onLaunch(it)
+                },
+                onAddToHome = { entry ->
+                    onAddToHome(entry)
+                    onDrawerOpenChange(false)
                 }
             )
         }
@@ -116,7 +125,8 @@ private fun HomePages(
     onOpenSettings: () -> Unit,
     editing: Boolean,
     onEditingChange: (Boolean) -> Unit,
-    onMove: (page: Int, from: Int, to: Int) -> Unit
+    onMove: (page: Int, from: Int, to: Int) -> Unit,
+    onRemove: (page: Int, slot: Int) -> Unit
 ) {
     val pageCount = state.pages.size.coerceAtLeast(1)
     val pagerState = rememberPagerState(pageCount = { pageCount })
@@ -143,7 +153,8 @@ private fun HomePages(
                 topPadding = 16.dp + insets.calculateTopPadding(),
                 onLaunch = onLaunch,
                 onEnterEditing = { onEditingChange(true) },
-                onMove = { from, to -> onMove(pageIndex, from, to) }
+                onMove = { from, to -> onMove(pageIndex, from, to) },
+                onRemove = { slot -> onRemove(pageIndex, slot) }
             )
         }
 
@@ -228,7 +239,8 @@ private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
 private fun AppDrawer(
     state: LauncherUiState,
     insets: PaddingValues,
-    onLaunch: (LaunchableApp) -> Unit
+    onLaunch: (LaunchableApp) -> Unit,
+    onAddToHome: (LauncherEntry) -> Unit
 ) {
     Box(
         Modifier
@@ -248,19 +260,25 @@ private fun AppDrawer(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(state.allApps, key = { it.app.component.flattenToString() }) { entry ->
-                AppTile(entry = entry, onClick = { onLaunch(entry.app) })
+                AppTile(
+                    entry = entry,
+                    onClick = { onLaunch(entry.app) },
+                    onLongClick = { onAddToHome(entry) }
+                )
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun AppTile(
     entry: LauncherEntry,
     onClick: () -> Unit,
     showLabel: Boolean = true,
     wobble: Boolean = false,
-    wobbleSeed: Int = 0
+    wobbleSeed: Int = 0,
+    onLongClick: (() -> Unit)? = null
 ) {
     val bitmap = remember(entry.icon) {
         entry.icon.toBitmap(ICON_PX, ICON_PX).asImageBitmap()
@@ -272,7 +290,7 @@ internal fun AppTile(
             .fillMaxWidth()
             .graphicsLayer { rotationZ = angle }
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
