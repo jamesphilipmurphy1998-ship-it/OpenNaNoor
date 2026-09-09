@@ -20,9 +20,11 @@ object AppRepository {
         val pm = context.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
 
+        // Our own settings activity is listed like any other app - the home
+        // screen is otherwise the only way to reach it, via a corner tap no
+        // one would guess at.
         return pm.queryIntentActivities(intent, 0)
             .asSequence()
-            .filter { it.activityInfo.packageName != context.packageName }
             .map { info ->
                 LaunchableApp(
                     component = ComponentName(
