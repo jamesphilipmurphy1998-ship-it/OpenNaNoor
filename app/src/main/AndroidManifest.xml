@@ -32,6 +32,23 @@
             </intent-filter>
         </activity>
 
+
+        <activity
+            android:name=".launcher.LauncherActivity"
+            android:exported="true"
+            android:label="OpenNaNoor Home"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.OpenNaNoor"
+            android:windowSoftInputMode="adjustPan">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".service.TintOverlayService"
             android:exported="false"
