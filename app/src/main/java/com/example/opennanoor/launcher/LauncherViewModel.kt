@@ -22,6 +22,7 @@ data class LauncherUiState(
     val entries: List<LauncherEntry> = emptyList(),
     val availablePacks: List<IconPackInfo> = emptyList(),
     val activePack: String? = null,
+    val iosStyle: Boolean = false,
     val loading: Boolean = true
 )
 
@@ -40,6 +41,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(loading = true)
             val context = getApplication<Application>()
             val packChoice = settings.iconPackPackage
+            val ios = settings.iosIconStyle
 
             val loaded = withContext(Dispatchers.IO) {
                 val apps = AppRepository.installedApps(context)
@@ -48,7 +50,10 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
                 val entries = apps.map { app ->
                     val themed = pack?.iconFor(app.component, app.rawIcon, ICON_PX)
-                    LauncherEntry(app, themed ?: app.rawIcon)
+                        ?: app.rawIcon
+                    // The squircle runs last so it shapes pack art too.
+                    val finished = if (ios) SquircleIcons.apply(themed, ICON_PX) else themed
+                    LauncherEntry(app, finished)
                 }
                 Triple(entries, packs, pack != null)
             }
@@ -57,6 +62,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 entries = loaded.first,
                 availablePacks = loaded.second,
                 activePack = packChoice.takeIf { loaded.third },
+                iosStyle = ios,
                 loading = false
             )
         }
@@ -64,6 +70,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectIconPack(packageName: String?) {
         settings.iconPackPackage = packageName
+        refresh()
+    }
+
+    fun setIosStyle(enabled: Boolean) {
+        settings.iosIconStyle = enabled
         refresh()
     }
 

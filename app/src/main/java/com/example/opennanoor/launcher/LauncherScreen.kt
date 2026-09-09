@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +50,7 @@ fun LauncherScreen(
     columns: Int,
     onLaunch: (LaunchableApp) -> Unit,
     onSelectPack: (String?) -> Unit,
+    onToggleIosStyle: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Box(modifier.fillMaxSize()) {
@@ -74,6 +76,7 @@ fun LauncherScreen(
         IconPackMenu(
             state = state,
             onSelectPack = onSelectPack,
+            onToggleIosStyle = onToggleIosStyle,
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(12.dp)
@@ -118,6 +121,7 @@ private fun AppTile(entry: LauncherEntry, onClick: () -> Unit) {
 private fun IconPackMenu(
     state: LauncherUiState,
     onSelectPack: (String?) -> Unit,
+    onToggleIosStyle: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var open by remember { mutableStateOf(false) }
@@ -131,6 +135,15 @@ private fun IconPackMenu(
             )
         }
         DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        if (state.iosStyle) "iOS shape: on" else "iOS shape: off"
+                    )
+                },
+                onClick = { onToggleIosStyle(!state.iosStyle); open = false }
+            )
+            HorizontalDivider()
             DropdownMenuItem(
                 text = { Text("System icons") },
                 onClick = { onSelectPack(null); open = false }

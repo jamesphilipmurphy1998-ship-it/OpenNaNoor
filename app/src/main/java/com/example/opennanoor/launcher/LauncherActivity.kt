@@ -37,6 +37,7 @@ class LauncherActivity : ComponentActivity() {
                     columns = settings.columns,
                     onLaunch = { AppRepository.launch(this, it.component) },
                     onSelectPack = vm::selectIconPack,
+                    onToggleIosStyle = vm::setIosStyle,
                     modifier = Modifier
                         .fillMaxSize()
                         .background(
