@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
                 val foregroundApp by AppMonitorService.currentApp.collectAsState()
 
                 val settings = remember { Settings(context) }
+                val iconPacks = remember(epoch) { IconPack.installedPacks(context) }
 
                 val states = remember(epoch, monitorConnected) {
                     FeatureCatalog.all.map { feature ->
@@ -81,6 +82,12 @@ class MainActivity : ComponentActivity() {
                 HomeScreen(
                     features = states,
                     foregroundApp = foregroundApp.takeIf { monitorConnected },
+                    iconPacks = iconPacks,
+                    activePack = remember(epoch) { settings.iconPackPackage },
+                    onSelectPack = { pack ->
+                        settings.iconPackPackage = pack
+                        epoch++
+                    },
                     onToggle = { feature, on ->
                         toggle(feature, on)
                         epoch++

@@ -113,6 +113,41 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         refresh()
     }
 
+    /**
+     * Moves an app to a new slot on the same page and persists the result.
+     * Updates state directly rather than reloading, so the grid doesn't flash
+     * while the user is still arranging things.
+     */
+    fun moveApp(pageIndex: Int, fromSlot: Int, toSlot: Int) {
+        val current = _state.value
+        val page = current.pages.getOrNull(pageIndex) ?: return
+        if (fromSlot !in page.indices) return
+
+        val target = toSlot.coerceIn(0, page.lastIndex)
+        if (target == fromSlot) return
+
+        val reordered = page.toMutableList().apply {
+            add(target, removeAt(fromSlot))
+        }
+        val pages = current.pages.toMutableList().apply { set(pageIndex, reordered) }
+
+        _state.value = current.copy(pages = pages)
+        persist(pages, current.dock)
+    }
+
+    private fun persist(
+        pages: List<List<LauncherEntry>>,
+        dock: List<LauncherEntry>
+    ) {
+        HomeLayout.save(
+            getApplication(),
+            HomeLayout(
+                pages = pages.map { page -> page.map { it.app.component } },
+                dock = dock.map { it.app.component }
+            )
+        )
+    }
+
     private data class Loaded(
         val pages: List<List<LauncherEntry>>,
         val dock: List<LauncherEntry>,

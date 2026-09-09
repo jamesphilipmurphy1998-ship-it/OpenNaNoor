@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -62,10 +63,12 @@ private const val ICON_PX = 192
 fun LauncherScreen(
     state: LauncherUiState,
     onLaunch: (LaunchableApp) -> Unit,
-    onSelectPack: (String?) -> Unit,
-    onToggleIosStyle: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
     drawerOpen: Boolean,
     onDrawerOpenChange: (Boolean) -> Unit,
+    editing: Boolean,
+    onEditingChange: (Boolean) -> Unit,
+    onMove: (page: Int, from: Int, to: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -81,8 +84,10 @@ fun LauncherScreen(
             insets = insets,
             onLaunch = onLaunch,
             onOpenDrawer = { onDrawerOpenChange(true) },
-            onSelectPack = onSelectPack,
-            onToggleIosStyle = onToggleIosStyle
+            onOpenSettings = onOpenSettings,
+            editing = editing,
+            onEditingChange = onEditingChange,
+            onMove = onMove
         )
 
         AnimatedVisibility(
@@ -108,8 +113,10 @@ private fun HomePages(
     insets: PaddingValues,
     onLaunch: (LaunchableApp) -> Unit,
     onOpenDrawer: () -> Unit,
-    onSelectPack: (String?) -> Unit,
-    onToggleIosStyle: (Boolean) -> Unit
+    onOpenSettings: () -> Unit,
+    editing: Boolean,
+    onEditingChange: (Boolean) -> Unit,
+    onMove: (page: Int, from: Int, to: Int) -> Unit
 ) {
     val pageCount = state.pages.size.coerceAtLeast(1)
     val pagerState = rememberPagerState(pageCount = { pageCount })
@@ -128,24 +135,16 @@ private fun HomePages(
                     }
                 }
         ) { pageIndex ->
-            val page = state.pages.getOrNull(pageIndex).orEmpty()
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(state.columns),
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    end = 12.dp,
-                    top = 16.dp + insets.calculateTopPadding(),
-                    bottom = 8.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                userScrollEnabled = false
-            ) {
-                items(page, key = { it.app.component.flattenToString() }) { entry ->
-                    AppTile(entry = entry, onClick = { onLaunch(entry.app) })
-                }
-            }
+            HomePage(
+                entries = state.pages.getOrNull(pageIndex).orEmpty(),
+                columns = state.columns,
+                rows = HomeLayout.ROWS_PER_PAGE,
+                editing = editing,
+                topPadding = 16.dp + insets.calculateTopPadding(),
+                onLaunch = onLaunch,
+                onEnterEditing = { onEditingChange(true) },
+                onMove = { from, to -> onMove(pageIndex, from, to) }
+            )
         }
 
         PageDots(
@@ -166,12 +165,13 @@ private fun HomePages(
         )
     }
 
-    // Settings affordance, tucked into the corner clear of the status bar.
-    IconPackMenu(
-        state = state,
-        onSelectPack = onSelectPack,
-        onToggleIosStyle = onToggleIosStyle,
-        modifier = Modifier.padding(top = insets.calculateTopPadding())
+    // Settings affordance: an invisible target in the corner, rather than a
+    // gear sitting on top of the first row of icons.
+    Spacer(
+        Modifier
+            .padding(top = insets.calculateTopPadding())
+            .size(48.dp)
+            .clickable(onClick = onOpenSettings)
     )
 }
 
@@ -255,18 +255,22 @@ private fun AppDrawer(
 }
 
 @Composable
-private fun AppTile(
+internal fun AppTile(
     entry: LauncherEntry,
     onClick: () -> Unit,
-    showLabel: Boolean = true
+    showLabel: Boolean = true,
+    wobble: Boolean = false,
+    wobbleSeed: Int = 0
 ) {
     val bitmap = remember(entry.icon) {
         entry.icon.toBitmap(ICON_PX, ICON_PX).asImageBitmap()
     }
+    val angle = rememberWobble(enabled = wobble, seed = wobbleSeed)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .graphicsLayer { rotationZ = angle }
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 2.dp),
@@ -289,43 +293,6 @@ private fun AppTile(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 5.dp)
             )
-        }
-    }
-}
-
-@Composable
-private fun IconPackMenu(
-    state: LauncherUiState,
-    onSelectPack: (String?) -> Unit,
-    onToggleIosStyle: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    var open by remember { mutableStateOf(false) }
-
-    Box(modifier) {
-        // A small invisible touch target rather than a visible gear sitting on
-        // top of the first row of icons.
-        Spacer(
-            Modifier
-                .size(44.dp)
-                .clickable { open = true }
-        )
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(if (state.iosStyle) "iOS shape: on" else "iOS shape: off") },
-                onClick = { onToggleIosStyle(!state.iosStyle); open = false }
-            )
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("System icons") },
-                onClick = { onSelectPack(null); open = false }
-            )
-            state.availablePacks.forEach { pack ->
-                DropdownMenuItem(
-                    text = { Text(pack.label) },
-                    onClick = { onSelectPack(pack.packageName); open = false }
-                )
-            }
         }
     }
 }

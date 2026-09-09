@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.opennanoor.MainActivity
 import com.example.opennanoor.ui.theme.OpenNaNoorTheme
 
 /**
@@ -34,23 +35,36 @@ class LauncherActivity : ComponentActivity() {
                 val vm: LauncherViewModel = viewModel()
                 val state by vm.state.collectAsState()
                 var drawerOpen by remember { mutableStateOf(false) }
+                var editing by remember { mutableStateOf(false) }
 
                 // Pressing home while the drawer is open closes it, as it would
                 // on any stock launcher.
+                // Home closes the drawer and ends arranging, as it would on a
+                // stock launcher.
                 remember(homePressed) {
                     drawerOpen = false
+                    editing = false
                     homePressed
                 }
 
-                BackHandler(enabled = drawerOpen) { drawerOpen = false }
+                BackHandler(enabled = drawerOpen || editing) {
+                    when {
+                        drawerOpen -> drawerOpen = false
+                        else -> editing = false
+                    }
+                }
 
                 LauncherScreen(
                     state = state,
                     onLaunch = { AppRepository.launch(this, it.component) },
-                    onSelectPack = vm::selectIconPack,
-                    onToggleIosStyle = vm::setIosStyle,
+                    onOpenSettings = {
+                        startActivity(Intent(this, MainActivity::class.java))
+                    },
                     drawerOpen = drawerOpen,
                     onDrawerOpenChange = { drawerOpen = it },
+                    editing = editing,
+                    onEditingChange = { editing = it },
+                    onMove = vm::moveApp,
                     modifier = Modifier.fillMaxSize()
                 )
             }
