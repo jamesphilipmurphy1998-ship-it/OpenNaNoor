@@ -34,8 +34,12 @@ object SquircleIcons {
     private const val SUPERELLIPSE_N = 5.0
     private const val PATH_SEGMENTS = 180
 
-    /** How much of the tile the glyph occupies, for legacy icons. */
-    private const val GLYPH_SCALE = 0.62f
+    /**
+     * How much of the tile the glyph occupies, for legacy icons. iOS artwork is
+     * full-bleed, so this sits high - the glyph should read as the icon itself,
+     * not as a logo floating in a box.
+     */
+    private const val GLYPH_SCALE = 0.84f
 
     fun apply(source: Drawable, sizePx: Int): Drawable {
         val output = createBitmap(sizePx, sizePx)
@@ -73,7 +77,7 @@ object SquircleIcons {
         val canvas = Canvas(bitmap)
         // Adaptive icons reserve the outer ~18% for masking, so overdraw
         // slightly to fill the squircle's corners rather than leaving gaps.
-        val bleed = (sizePx * 0.08f).toInt()
+        val bleed = (sizePx * 0.14f).toInt()
         source.setBounds(-bleed, -bleed, sizePx + bleed, sizePx + bleed)
         source.draw(canvas)
         return bitmap
@@ -106,8 +110,13 @@ object SquircleIcons {
             Palette.from(glyph).clearFilters().generate().getDominantColor(Color.WHITE)
         }.getOrDefault(Color.WHITE)
 
-        // Push towards white so the glyph stays readable on top of it.
-        return blend(dominant, Color.WHITE, 0.72f)
+        // Keep most of the sampled colour - iOS tiles are saturated, not pale.
+        // Only lift very dark samples, so a dark glyph doesn't vanish into one.
+        val luminance = (0.299f * Color.red(dominant) +
+            0.587f * Color.green(dominant) +
+            0.114f * Color.blue(dominant)) / 255f
+        val lift = if (luminance < 0.35f) 0.45f else 0.18f
+        return blend(dominant, Color.WHITE, lift)
     }
 
     private fun blend(from: Int, to: Int, ratio: Float): Int {

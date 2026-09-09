@@ -28,8 +28,16 @@ data class Feature(
 object FeatureCatalog {
     const val ID_TINT = "screen_tint"
     const val ID_APP_MONITOR = "app_monitor"
+    const val ID_IOS_ICONS = "ios_icons"
 
     val all = listOf(
+        Feature(
+            id = ID_IOS_ICONS,
+            title = "iOS icon shape",
+            description = "Reshapes every app icon into Apple's squircle, full-bleed. Applies on the OpenNaNoor home screen.",
+            requirement = Requirement.NONE,
+            available = true
+        ),
         Feature(
             id = ID_TINT,
             title = "Screen tint",

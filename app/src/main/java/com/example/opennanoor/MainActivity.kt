@@ -21,6 +21,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.opennanoor.core.Feature
 import com.example.opennanoor.core.FeatureCatalog
 import com.example.opennanoor.core.Permissions
+import com.example.opennanoor.core.Settings
 import com.example.opennanoor.core.Requirement
 import com.example.opennanoor.service.AppMonitorService
 import com.example.opennanoor.service.TintOverlayService
@@ -53,6 +54,8 @@ class MainActivity : ComponentActivity() {
                 val monitorConnected by AppMonitorService.isConnected.collectAsState()
                 val foregroundApp by AppMonitorService.currentApp.collectAsState()
 
+                val settings = remember { Settings(context) }
+
                 val states = remember(epoch, monitorConnected) {
                     FeatureCatalog.all.map { feature ->
                         val granted = when (feature.requirement) {
@@ -67,6 +70,7 @@ class MainActivity : ComponentActivity() {
                         val enabled = when (feature.id) {
                             FeatureCatalog.ID_TINT -> TintOverlayService.running
                             FeatureCatalog.ID_APP_MONITOR -> monitorConnected
+                            FeatureCatalog.ID_IOS_ICONS -> settings.iosIconStyle
                             else -> false
                         }
                         FeatureState(feature, enabled, granted)
@@ -88,6 +92,8 @@ class MainActivity : ComponentActivity() {
 
     private fun toggle(feature: Feature, on: Boolean) {
         when (feature.id) {
+            FeatureCatalog.ID_IOS_ICONS -> Settings(this).iosIconStyle = on
+
             FeatureCatalog.ID_TINT ->
                 if (on) TintOverlayService.start(this, TINT_COLOR)
                 else TintOverlayService.stop(this)
