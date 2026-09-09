@@ -5,17 +5,29 @@ import android.content.Context
 import androidx.core.content.edit
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
+
+/** A slot's saved contents: one app, or a folder of apps. */
+sealed class HomeSlot {
+    data class AppSlot(val component: ComponentName) : HomeSlot()
+    data class FolderSlot(
+        val id: String,
+        val name: String,
+        val members: List<ComponentName>
+    ) : HomeSlot()
+}
 
 /**
- * Which apps sit on which home page, and which sit in the dock.
+ * Which apps and folders sit on which home page, and which sit in the dock.
  *
- * Stored as flattened component names. Anything uninstalled since the layout
- * was written is dropped on read, so a missing app leaves a gap rather than a
- * crash.
+ * Stored as flattened component names inside a small JSON document. Anything
+ * uninstalled since the layout was written is dropped on read - a missing
+ * app leaves a gap rather than a crash, and a folder that loses every member
+ * this way is dropped along with it.
  */
 data class HomeLayout(
-    val pages: List<List<ComponentName>>,
-    val dock: List<ComponentName>
+    val pages: List<List<HomeSlot>>,
+    val dock: List<HomeSlot>
 ) {
     companion object {
         const val ROWS_PER_PAGE = 5
@@ -39,8 +51,9 @@ data class HomeLayout(
             val rest = apps.filterNot { it.component in dockComponents }
 
             return HomeLayout(
-                pages = rest.chunked(perPage).map { page -> page.map { it.component } },
-                dock = dock.map { it.component }
+                pages = rest.chunked(perPage)
+                    .map { page -> page.map { HomeSlot.AppSlot(it.component) } },
+                dock = dock.map { HomeSlot.AppSlot(it.component) }
             )
         }
 
@@ -55,10 +68,9 @@ data class HomeLayout(
                 val json = JSONObject(raw)
                 HomeLayout(
                     pages = json.getJSONArray("pages").mapArrays { page ->
-                        page.mapComponents().filter { it in available }
+                        page.mapSlots(available)
                     }.filter { it.isNotEmpty() },
-                    dock = json.getJSONArray("dock").mapComponents()
-                        .filter { it in available }
+                    dock = json.getJSONArray("dock").mapSlots(available)
                 )
             }.getOrNull()
         }
@@ -67,29 +79,76 @@ data class HomeLayout(
             val json = JSONObject().apply {
                 put("pages", JSONArray().apply {
                     layout.pages.forEach { page ->
-                        put(JSONArray().apply {
-                            page.forEach { put(it.flattenToString()) }
-                        })
+                        put(JSONArray().apply { page.forEach { put(it.toJson()) } })
                     }
                 })
                 put("dock", JSONArray().apply {
-                    layout.dock.forEach { put(it.flattenToString()) }
+                    layout.dock.forEach { put(it.toJson()) }
                 })
             }
             prefs(context).edit { putString(KEY, json.toString()) }
         }
+
+        fun newFolderId(): String = UUID.randomUUID().toString()
 
         private fun prefs(context: Context) =
             context.getSharedPreferences("opennanoor", Context.MODE_PRIVATE)
 
         private const val KEY = "home_layout"
 
-        private fun JSONArray.mapComponents(): List<ComponentName> =
-            (0 until length()).mapNotNull {
-                ComponentName.unflattenFromString(optString(it))
+        private fun HomeSlot.toJson(): JSONObject = when (this) {
+            is HomeSlot.AppSlot -> JSONObject().apply {
+                put("t", "app")
+                put("c", component.flattenToString())
+            }
+            is HomeSlot.FolderSlot -> JSONObject().apply {
+                put("t", "folder")
+                put("id", id)
+                put("name", name)
+                put("members", JSONArray().apply {
+                    members.forEach { put(it.flattenToString()) }
+                })
+            }
+        }
+
+        private fun JSONArray.mapSlots(available: Set<ComponentName>): List<HomeSlot> =
+            (0 until length()).mapNotNull { index ->
+                // Slots used to be bare component strings, before folders
+                // existed. Read that shape too, as a plain app slot, so an
+                // older saved layout doesn't silently lose everything.
+                val legacy = optString(index, "")
+                if (legacy.isNotEmpty() && optJSONObject(index) == null) {
+                    return@mapNotNull ComponentName.unflattenFromString(legacy)
+                        ?.takeIf { it in available }
+                        ?.let { HomeSlot.AppSlot(it) }
+                }
+
+                val obj = optJSONObject(index) ?: return@mapNotNull null
+                when (obj.optString("t")) {
+                    "app" -> ComponentName.unflattenFromString(obj.optString("c"))
+                        ?.takeIf { it in available }
+                        ?.let { HomeSlot.AppSlot(it) }
+
+                    "folder" -> {
+                        val members = obj.optJSONArray("members")?.let { arr ->
+                            (0 until arr.length()).mapNotNull {
+                                ComponentName.unflattenFromString(arr.optString(it))
+                                    ?.takeIf { c -> c in available }
+                            }
+                        }.orEmpty()
+                        if (members.isEmpty()) null
+                        else HomeSlot.FolderSlot(
+                            id = obj.optString("id").ifEmpty { newFolderId() },
+                            name = obj.optString("name").ifEmpty { "Folder" },
+                            members = members
+                        )
+                    }
+
+                    else -> null
+                }
             }
 
         private fun <T> JSONArray.mapArrays(block: (JSONArray) -> T): List<T> =
-            (0 until length()).mapNotNull { optJSONArray(it) }.map(block)
+            (0 until length()).mapNotNull(::optJSONArray).map(block)
     }
 }

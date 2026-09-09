@@ -47,8 +47,9 @@ class LauncherActivity : ComponentActivity() {
                     homePressed
                 }
 
-                BackHandler(enabled = drawerOpen || editing) {
+                BackHandler(enabled = drawerOpen || editing || state.openFolderId != null) {
                     when {
+                        state.openFolderId != null -> vm.closeFolder()
                         drawerOpen -> drawerOpen = false
                         else -> editing = false
                     }
@@ -56,15 +57,19 @@ class LauncherActivity : ComponentActivity() {
 
                 LauncherScreen(
                     state = state,
-                    onLaunch = { AppRepository.launch(this, it.component) },
+                    onLaunchApp = { AppRepository.launch(this, it.component) },
                     onOpenSettings = { openSettings() },
                     drawerOpen = drawerOpen,
                     onDrawerOpenChange = { drawerOpen = it },
                     editing = editing,
                     onEditingChange = { editing = it },
-                    onMove = vm::moveApp,
+                    onMove = vm::moveItem,
+                    onPlaceFromDrawer = vm::placeFromDrawer,
                     onRemove = vm::removeFromHome,
-                    onAddToHome = vm::addToHome,
+                    onOpenFolder = vm::openFolder,
+                    onCloseFolder = vm::closeFolder,
+                    onRemoveFromFolder = vm::removeFromFolder,
+                    onUninstall = vm::uninstallApp,
                     modifier = Modifier.fillMaxSize()
                 )
             }

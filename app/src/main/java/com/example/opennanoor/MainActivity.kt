@@ -84,10 +84,12 @@ class MainActivity : ComponentActivity() {
                     foregroundApp = foregroundApp.takeIf { monitorConnected },
                     iconPacks = iconPacks,
                     activePack = remember(epoch) { settings.iconPackPackage },
+                    isDefaultHome = remember(epoch) { Permissions.isDefaultHome(context) },
                     onSelectPack = { pack ->
                         settings.iconPackPackage = pack
                         epoch++
                     },
+                    onOpenHomeSettings = { startActivity(Permissions.homeAppSettingsIntent()) },
                     onToggle = { feature, on ->
                         toggle(feature, on)
                         epoch++

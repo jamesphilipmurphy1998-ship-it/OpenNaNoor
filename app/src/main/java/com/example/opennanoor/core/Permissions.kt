@@ -44,4 +44,20 @@ object Permissions {
 
     fun accessibilitySettingsIntent(): Intent =
         Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+
+    /** Whether OpenNaNoor is the currently selected home app. */
+    fun isDefaultHome(context: Context): Boolean {
+        val resolved = context.packageManager.resolveActivity(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME),
+            0
+        )
+        return resolved?.activityInfo?.packageName == context.packageName
+    }
+
+    /**
+     * Opens the system's "Home app" picker. There is no API to switch the
+     * default home app directly - only the user, in that system screen, can
+     * do it - so this is as close to a toggle as the platform allows.
+     */
+    fun homeAppSettingsIntent(): Intent = Intent(Settings.ACTION_HOME_SETTINGS)
 }

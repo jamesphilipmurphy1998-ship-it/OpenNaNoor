@@ -48,9 +48,11 @@ fun HomeScreen(
     foregroundApp: String?,
     iconPacks: List<IconPackInfo>,
     activePack: String?,
+    isDefaultHome: Boolean,
     onToggle: (Feature, Boolean) -> Unit,
     onGrant: (Requirement) -> Unit,
     onSelectPack: (String?) -> Unit,
+    onOpenHomeSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
@@ -65,6 +67,13 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item { Spacer(Modifier.height(4.dp)) }
+
+            item {
+                HomeSwitcherCard(
+                    isDefaultHome = isDefaultHome,
+                    onOpenHomeSettings = onOpenHomeSettings
+                )
+            }
 
             if (foregroundApp != null) {
                 item { ForegroundAppCard(foregroundApp) }
@@ -87,6 +96,47 @@ fun HomeScreen(
             }
 
             item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun HomeSwitcherCard(
+    isDefaultHome: Boolean,
+    onOpenHomeSettings: () -> Unit
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isDefaultHome) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant
+            }
+        )
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Home screen", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = if (isDefaultHome) {
+                        "OpenNaNoor is your home screen."
+                    } else {
+                        "The Pixel launcher is your home screen."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            TextButton(onClick = onOpenHomeSettings) {
+                Text(if (isDefaultHome) "Switch back" else "Switch to OpenNaNoor")
+            }
         }
     }
 }
