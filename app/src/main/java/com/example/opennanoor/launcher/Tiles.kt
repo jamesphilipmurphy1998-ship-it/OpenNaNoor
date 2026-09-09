@@ -48,7 +48,8 @@ internal fun HomeItemTile(
     showLabel: Boolean = true,
     wobble: Boolean = false,
     wobbleSeed: Int = 0,
-    onLongClick: (() -> Unit)? = null
+    onLongClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
     val angle = rememberWobble(enabled = wobble, seed = wobbleSeed)
     val label = when (item) {
@@ -57,7 +58,7 @@ internal fun HomeItemTile(
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .graphicsLayer { rotationZ = angle }
             .clip(RoundedCornerShape(12.dp))

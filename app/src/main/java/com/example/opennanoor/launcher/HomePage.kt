@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -68,9 +69,12 @@ fun HomePage(
         val topPaddingPx = with(density) { topPadding.toPx() }
 
         items.forEachIndexed { slot, item ->
+            // The dragged tile's contents are hidden - the floating ghost
+            // stands in for it - but its Box stays composed. Removing it
+            // would unmount the pointerInput tracking the finger and kill
+            // the drag the moment it started.
             val isDragOrigin = drag.active &&
                 drag.origin == HomeLocation.Page(pageIndex, slot)
-            if (isDragOrigin) return@forEachIndexed
 
             val row = slot / columns
             val column = slot % columns
@@ -116,7 +120,8 @@ fun HomePage(
                 Box(
                     Modifier
                         .fillMaxSize()
-                        .scale(armedScale),
+                        .scale(armedScale)
+                        .alpha(if (isDragOrigin) 0f else 1f),
                     contentAlignment = Alignment.Center
                 ) {
                     if (armed) {
@@ -135,7 +140,7 @@ fun HomePage(
                         wobbleSeed = slot
                     )
                 }
-                if (editing) {
+                if (editing && !isDragOrigin) {
                     RemoveBadge(
                         onClick = { onRemove(slot) },
                         modifier = Modifier.align(Alignment.TopStart)

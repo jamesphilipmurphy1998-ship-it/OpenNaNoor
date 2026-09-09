@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -412,7 +413,9 @@ private fun Dock(
         items.forEachIndexed { index, item ->
             val isDragOrigin = drag.active && drag.origin == HomeLocation.Dock(index)
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                if (!isDragOrigin) {
+                run {
+                    // Kept composed while dragging - see HomePage - and merely
+                    // made invisible, so the gesture handler survives.
                     Box(
                         Modifier.pointerInput(index) {
                             detectDragGesturesAfterLongPress(
@@ -437,7 +440,8 @@ private fun Dock(
                             item = item,
                             onClick = { if (!editing) onTap(item) },
                             showLabel = false,
-                            wobble = editing
+                            wobble = editing,
+                            modifier = Modifier.alpha(if (isDragOrigin) 0f else 1f)
                         )
                     }
                 }
