@@ -6,6 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -31,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -59,11 +65,20 @@ fun LauncherScreen(
             return@Box
         }
 
+        // The grid draws edge to edge, so the status bar and gesture bar have
+        // to be paid for in content padding rather than by insetting the whole
+        // surface - otherwise the background stops short of the screen edges.
+        val systemBars = WindowInsets.systemBars.asPaddingValues()
+        val layoutDirection = LocalLayoutDirection.current
+
         LazyVerticalGrid(
             columns = GridCells.Fixed(columns),
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                start = 16.dp, end = 16.dp, top = 72.dp, bottom = 32.dp
+                start = 16.dp + systemBars.calculateStartPadding(layoutDirection),
+                end = 16.dp + systemBars.calculateEndPadding(layoutDirection),
+                top = 24.dp + systemBars.calculateTopPadding(),
+                bottom = 24.dp + systemBars.calculateBottomPadding()
             ),
             verticalArrangement = Arrangement.spacedBy(20.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -79,6 +94,7 @@ fun LauncherScreen(
             onToggleIosStyle = onToggleIosStyle,
             modifier = Modifier
                 .align(Alignment.TopEnd)
+                .padding(top = systemBars.calculateTopPadding())
                 .padding(12.dp)
         )
     }
