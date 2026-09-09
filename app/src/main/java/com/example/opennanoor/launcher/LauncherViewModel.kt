@@ -55,10 +55,16 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
                 val byComponent = apps.associateBy { it.component }
                 val icons = apps.associate { app ->
-                    val themed = pack?.iconFor(app.component, app.rawIcon, ICON_PX)
-                        ?: app.rawIcon
-                    // The squircle runs last, so it shapes pack artwork too.
-                    val finished = if (ios) SquircleIcons.apply(themed, ICON_PX) else themed
+                    val fromPack = pack?.iconFor(app.component, app.rawIcon, ICON_PX)
+                    val themed = fromPack ?: app.rawIcon
+                    // The squircle runs last, so it shapes pack artwork too -
+                    // but pack output is already a finished tile, so it only
+                    // gets clipped rather than re-inset onto a second tile.
+                    val finished = if (ios) {
+                        SquircleIcons.apply(themed, ICON_PX, alreadyTiled = fromPack != null)
+                    } else {
+                        themed
+                    }
                     app.component to LauncherEntry(app, finished)
                 }
 

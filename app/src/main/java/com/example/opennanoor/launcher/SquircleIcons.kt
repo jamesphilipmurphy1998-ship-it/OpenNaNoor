@@ -41,12 +41,19 @@ object SquircleIcons {
      */
     private const val GLYPH_SCALE = 0.84f
 
-    fun apply(source: Drawable, sizePx: Int): Drawable {
+    /**
+     * [alreadyTiled] marks a drawable that is already a finished, full-bleed
+     * tile - icon-pack artwork, or a composite the pack built on its own
+     * background. Those only need clipping. Running them through the legacy
+     * path would inset a tile inside another tile.
+     */
+    fun apply(source: Drawable, sizePx: Int, alreadyTiled: Boolean = false): Drawable {
         val output = createBitmap(sizePx, sizePx)
         val canvas = Canvas(output)
         val bounds = Rect(0, 0, sizePx, sizePx)
 
         val layer = when {
+            alreadyTiled -> renderFullBleed(source, sizePx)
             source is AdaptiveIconDrawable -> renderAdaptive(source, sizePx)
             else -> renderLegacy(source, sizePx)
         }
@@ -65,6 +72,14 @@ object SquircleIcons {
         canvas.drawBitmap(maskBitmap, 0f, 0f, clip)
 
         return android.graphics.drawable.BitmapDrawable(null, output)
+    }
+
+    /** Draws an already-finished tile at full size, ready to be clipped. */
+    private fun renderFullBleed(source: Drawable, sizePx: Int): Bitmap {
+        val bitmap = createBitmap(sizePx, sizePx)
+        source.setBounds(0, 0, sizePx, sizePx)
+        source.draw(Canvas(bitmap))
+        return bitmap
     }
 
     /**
