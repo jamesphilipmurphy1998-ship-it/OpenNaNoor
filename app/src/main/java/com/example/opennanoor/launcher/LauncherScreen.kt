@@ -495,7 +495,10 @@ private fun Dock(
                     // Kept composed while dragging - see HomePage - and merely
                     // made invisible, so the gesture handler survives.
                     Box(
-                        Modifier.pointerInput(index) {
+                        // Same fix as HomePage's tiles - item.id keeps this
+                        // bound to what's actually in the slot, not just its
+                        // position, without restarting mid-gesture.
+                        Modifier.pointerInput(index, item.id) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { offset ->
                                     drag.start(

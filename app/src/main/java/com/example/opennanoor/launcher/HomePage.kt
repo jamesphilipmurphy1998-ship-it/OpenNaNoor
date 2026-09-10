@@ -124,12 +124,20 @@ fun HomePage(
                         val p = animatedOffset.value
                         androidx.compose.ui.unit.IntOffset(p.x.toInt(), p.y.toInt())
                     }
-                    // Keyed only on this cell's identity. Keying on `editing`
-                    // or on the page's item list tore the gesture detector down
-                    // and restarted it the instant a drag began - editing flips
-                    // true inside onDragStart - which killed the drag before a
-                    // single move event landed.
-                    .pointerInput(pageIndex, slot) {
+                    // Keyed on this cell's identity plus what's actually in
+                    // it. Position alone was wrong: once a fold or a drop
+                    // elsewhere reshuffled which item sits at this slot, the
+                    // still-running coroutine from before that reshuffle kept
+                    // using its original, now-stale item - so picking up the
+                    // new occupant showed the ghost of whatever used to be
+                    // there and never resolved as a real drag of the new one.
+                    // Keying on `editing` (or the whole item list) was ALSO
+                    // wrong the other way - tore the detector down and
+                    // restarted it the instant a drag began, since editing
+                    // flips true inside onDragStart, killing the drag before
+                    // a single move event landed. item.id changes only
+                    // between gestures, never mid-one, so it avoids both.
+                    .pointerInput(pageIndex, slot, item.id) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
                                 drag.start(
