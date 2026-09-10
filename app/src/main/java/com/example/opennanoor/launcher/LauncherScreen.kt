@@ -44,10 +44,17 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.flow.collectLatest
@@ -92,6 +99,7 @@ fun LauncherScreen(
     onOpenFolder: (String) -> Unit,
     onCloseFolder: () -> Unit,
     onRemoveFromFolder: (folderId: String, componentId: String) -> Unit,
+    onRenameFolder: (folderId: String, newName: String) -> Unit,
     onUninstall: (ComponentName) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -428,6 +436,7 @@ fun LauncherScreen(
                 onLaunch = onLaunchApp,
                 onDismiss = onCloseFolder,
                 onRemoveItem = { componentId -> onRemoveFromFolder(folder.folderId, componentId) },
+                onRename = { newName -> onRenameFolder(folder.folderId, newName) },
                 drag = drag,
                 outerOrigin = outerOrigin,
                 onDragMoved = ::handleDragMoved,
@@ -756,12 +765,14 @@ private fun FolderOverlay(
     onLaunch: (LaunchableApp) -> Unit,
     onDismiss: () -> Unit,
     onRemoveItem: (componentId: String) -> Unit,
+    onRename: (newName: String) -> Unit,
     drag: DragCoordinator,
     outerOrigin: Offset,
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit
 ) {
     var editing by remember { mutableStateOf(homeEditing) }
+    var renaming by remember { mutableStateOf(false) }
     // Light enough that the blurred home screen behind genuinely reads
     // through it - a frosted pane, not a solid one - while still giving
     // the folder's own icons somewhere legible to sit.
@@ -786,8 +797,20 @@ private fun FolderOverlay(
                 text = folder.name,
                 style = MaterialTheme.typography.titleLarge,
                 color = Color.White.copy(alpha = if (dimmed) 0f else 1f),
-                modifier = Modifier.padding(bottom = 20.dp)
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = !dimmed) { renaming = true }
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                    .padding(bottom = 16.dp)
             )
+
+            if (renaming) {
+                RenameFolderDialog(
+                    currentName = folder.name,
+                    onSave = { newName -> onRename(newName); renaming = false },
+                    onDismiss = { renaming = false }
+                )
+            }
 
             LazyVerticalGrid(
                 columns = GridCells.Fixed(4),
@@ -879,6 +902,38 @@ internal fun slotAt(
     val column = (centre.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
     val row = ((centre.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
     return row * columns + column
+}
+
+@Composable
+private fun RenameFolderDialog(
+    currentName: String,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var text by remember { mutableStateOf(TextFieldValue(currentName, TextRange(0, currentName.length))) }
+    val focusRequester = remember { FocusRequester() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rename folder") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
+            )
+            LaunchedEffect(Unit) { focusRequester.requestFocus() }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(text.text) }) { Text("Save") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
 }
 
 /** Applies pointer input handling only when [condition] is true. */

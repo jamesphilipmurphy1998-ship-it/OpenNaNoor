@@ -368,6 +368,26 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * folder itself sits on. A folder left with one member dissolves back
      * into a plain app tile - the same rule iOS uses.
      */
+    /** Renames a folder in place, wherever it sits - a page or the dock. */
+    fun renameFolder(folderId: String, newName: String) {
+        val trimmed = newName.trim().ifEmpty { "Folder" }
+        val current = _state.value
+        val pages = current.pages.map { page ->
+            page.map { item ->
+                if (item is HomeItem.FolderItem && item.folderId == folderId) {
+                    item.copy(name = trimmed)
+                } else item
+            }
+        }
+        val dock = current.dock.map { item ->
+            if (item is HomeItem.FolderItem && item.folderId == folderId) {
+                item.copy(name = trimmed)
+            } else item
+        }
+        _state.value = current.copy(pages = pages, dock = dock)
+        persist(pages, dock)
+    }
+
     fun removeFromFolder(folderId: String, componentId: String) {
         val current = _state.value
         val pages = current.pages.map { it.toMutableList() }.toMutableList()

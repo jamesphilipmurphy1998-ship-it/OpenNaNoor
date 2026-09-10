@@ -69,6 +69,7 @@ class LauncherActivity : ComponentActivity() {
                     onOpenFolder = vm::openFolder,
                     onCloseFolder = vm::closeFolder,
                     onRemoveFromFolder = vm::removeFromFolder,
+                    onRenameFolder = vm::renameFolder,
                     onUninstall = vm::uninstallApp,
                     modifier = Modifier.fillMaxSize()
                 )
