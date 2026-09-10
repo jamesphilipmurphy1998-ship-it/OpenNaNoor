@@ -456,6 +456,7 @@ fun LauncherScreen(
                 },
                 onDismiss = { onDrawerOpenChange(false) },
                 drag = drag,
+                outerOrigin = outerOrigin,
                 onDragMoved = ::handleDragMoved,
                 onDragEnded = ::handleDragEnded
             )
@@ -765,6 +766,13 @@ private fun AppDrawer(
     onLaunch: (LaunchableApp) -> Unit,
     onDismiss: () -> Unit,
     drag: DragCoordinator,
+    // Same translation dockBounds and each dock icon use - a drawer tile
+    // needs its own absolute position in that shared frame too, or a drag
+    // starting here seeds drag.position with a tiny local touch offset
+    // (a few dp inside this one grid cell) instead of a real position, and
+    // every hit-test downstream - which dock slot, which page cell - ends
+    // up computed from a wildly wrong point.
+    outerOrigin: Offset,
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit
 ) {
@@ -792,11 +800,16 @@ private fun AppDrawer(
             items(state.allApps, key = { it.id }) { appItem ->
                 val isDragOrigin = drag.active && drag.fromDrawer &&
                     drag.item?.id == appItem.id
+                var tileOrigin by remember { mutableStateOf(Offset.Zero) }
                 Box(
-                    Modifier.pointerInput(appItem.id) {
+                    Modifier
+                        .onGloballyPositioned {
+                            tileOrigin = it.positionInWindow() - outerOrigin
+                        }
+                        .pointerInput(appItem.id) {
                         detectDragGesturesAfterLongPress(
-                            onDragStart = { offset ->
-                                drag.start(item = appItem, origin = null, startPosition = offset)
+                            onDragStart = { touch ->
+                                drag.start(item = appItem, origin = null, startPosition = tileOrigin + touch)
                             },
                             onDrag = { change, amount ->
                                 change.consume()
