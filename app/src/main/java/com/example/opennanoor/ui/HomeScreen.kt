@@ -205,10 +205,8 @@ private fun IconPackCard(
  * icon size - icon size and spacing both live inside the dock's own fixed
  * outer footprint no matter what's picked here.
  *
- * 4 and 5 are fully wired up; 1-3 are visible on the slider but don't
- * change anything yet. 6 is a size preview only for now - it shrinks the
- * icons to test the look, but the dock still won't actually hold more than
- * 5 apps until a real 6th slot is built (see LauncherViewModel).
+ * 4, 5 and 6 are fully wired up; 1-3 are visible on the slider but don't
+ * change anything yet.
  */
 @Composable
 private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> Unit) {
@@ -224,10 +222,10 @@ private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> 
             Text("Dock icon count", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                text = when (count) {
-                    in 4..5 -> "$count icons in the dock. The dock itself stays the same size - icons pack in tighter as more are added."
-                    6 -> "Size preview only - icons shrink to show how 6 would look, but the dock still holds at most 5 apps for now."
-                    else -> "1-3 aren't wired up yet - pick 4 or 5."
+                text = if (count in 4..6) {
+                    "$count icons in the dock. The dock itself stays the same size - icons pack in tighter or shrink as more are added."
+                } else {
+                    "1-3 aren't wired up yet - pick 4, 5 or 6."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

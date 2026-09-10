@@ -51,14 +51,6 @@ data class LauncherUiState(
         }
 }
 
-/**
- * The dock icon count setting goes up to 6 already, so its size can be
- * previewed before the slot itself exists - but a real 6th slot (where a
- * 6th app could actually land) isn't built yet, so insertions still clamp
- * to this regardless of what the setting says.
- */
-private const val MAX_WIRED_DOCK_CAPACITY = 5
-
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settings = Settings(app)
@@ -191,8 +183,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * bundles them into a new folder; dropping one onto a folder joins it;
      * dropping onto empty space inserts there, pushing later items along. A
      * page that fills past its row count spills the drop onto a fresh page
-     * rather than silently overflowing; the dock, fixed at four slots, clamps
-     * to its last slot instead.
+     * rather than silently overflowing; a full dock (dockIconCount icons
+     * already in it) rejects a non-merging drop instead, since it has
+     * nowhere to spill into.
      */
     fun moveItem(from: HomeLocation, to: HomeLocation, fold: Boolean = false) {
         val current = _state.value
@@ -214,7 +207,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     ?: return
         }
 
-        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount.coerceAtMost(MAX_WIRED_DOCK_CAPACITY), fold)
+        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
             page.isNotEmpty() || pagesWorking.size == 1
@@ -258,8 +251,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * Inserts [item] at [to], mutating [pagesWorking]/[dockWorking] in place.
      * Dropping onto another app bundles both into a new folder; dropping onto
      * a folder joins it; dropping past a full page's row count spills onto a
-     * fresh page rather than overflowing it, and the dock, fixed at four
-     * slots, clamps to its last one.
+     * fresh page rather than overflowing it, and a full dock (dockCapacity
+     * icons already in it) rejects a non-merging drop, since it has nowhere
+     * to spill into - its own outer size never changes.
      */
     private fun insertItem(
         item: HomeItem,
@@ -367,7 +361,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
-        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount.coerceAtMost(MAX_WIRED_DOCK_CAPACITY), fold)
+        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
         _state.value = current.copy(pages = finalPages, dock = dockWorking)
