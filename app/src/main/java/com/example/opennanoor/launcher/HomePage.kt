@@ -170,7 +170,23 @@ fun HomePage(
                     ?: Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
-            LaunchedEffect(Unit) {
+            // Keyed on slot after all, even though the Animatable above
+            // isn't - targetOffset() is a plain local function, closing
+            // over THIS composition's slot/item, not a reactive read
+            // snapshotFlow can notice changing on its own. Leaving this
+            // effect unkeyed (as an earlier version of this fix did) meant
+            // it kept running the coroutine from this tile's very first
+            // launch forever, permanently closed over whatever slot that
+            // was - so a later push that moved this same app to a new slot
+            // never updated where it animated to, while the item that
+            // took over its OLD slot got its own fresh effect there too:
+            // two different apps' tiles both animating toward the same
+            // pixel position, rendered exactly on top of each other.
+            // Restarting on a slot change fixes that without undoing the
+            // point of key(item.id) above - animatedOffset itself isn't
+            // re-created, so restarting merely resumes tracking from
+            // wherever it already was, not a reset.
+            LaunchedEffect(slot) {
                 snapshotFlow { targetOffset() }
                     .collectLatest { target ->
                         animatedOffset.animateTo(target, tween(REFLOW_ANIMATION_MS))

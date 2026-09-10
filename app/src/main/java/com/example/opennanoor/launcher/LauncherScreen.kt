@@ -832,14 +832,24 @@ private fun Dock(
                     ?: Offset(restGapPx + slot * restPitchPx, 0f)
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
-            // Still keyed on items.size, even with key(item.id) now giving
-            // every icon a stable identity across a slot change - this
-            // restarts snapshotFlow's collector with a fresh closure over
-            // the current packing whenever the count actually changes,
-            // since a plain captured val (restGapPx/restPitchPx, not
-            // Compose state) inside an already-running collector otherwise
-            // keeps reading whatever it closed over at launch, forever.
-            LaunchedEffect(items.size) {
+            // Keyed on both slot and items.size, even with key(item.id) now
+            // giving every icon a stable identity across a slot change.
+            // targetX(slot) is a plain local function, closing over THIS
+            // composition's slot - not a reactive read the snapshotFlow
+            // below can notice changing on its own - so leaving slot out of
+            // this key meant an icon that got pushed to a new slot kept
+            // this same effect running forever, permanently closed over its
+            // OLD slot, while whatever took over that old slot got its own
+            // fresh effect targeting the very same position: two icons
+            // rendered exactly on top of each other. items.size stays for
+            // the separate reason it was added before - a plain captured
+            // val (restGapPx/restPitchPx, not Compose state) inside an
+            // already-running collector doesn't refresh just because the
+            // count changed, if slot alone didn't also change. Restarting
+            // doesn't reset animatedOffset itself (that's unkeyed, kept
+            // alive by key(item.id) above), so this only ever resumes
+            // tracking from wherever it already was, not a fresh jump.
+            LaunchedEffect(slot, items.size) {
                 androidx.compose.runtime.snapshotFlow { targetX(slot) }
                     .collectLatest { x ->
                         animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
