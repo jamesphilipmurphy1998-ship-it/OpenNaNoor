@@ -428,11 +428,19 @@ internal fun pageDropTarget(
     // mean "insert beside it" instead, or there would be no way to place
     // anything next to an existing icon without folding into it.
     val withinCell = ((centre.x - column * cellWidthPx) / cellWidthPx).coerceIn(0f, 1f)
-    return when {
-        withinCell < FOLDER_ZONE_START -> PageDropTarget(gap = cellIndex, holdTarget = null)
-        withinCell > FOLDER_ZONE_END -> PageDropTarget(gap = cellIndex + 1, holdTarget = null)
-        else -> PageDropTarget(gap = cellIndex, holdTarget = cellIndex)
-    }
+
+    // Which side of this cell's own midpoint a plain (non-folding) insert
+    // lands on - decoupled from the wider hold zone below. Tying gap to
+    // FOLDER_ZONE_START/END meant the entire 60%-wide hold zone fell back
+    // to "insert before" whenever a drop didn't dwell long enough to arm a
+    // fold there - so a quick drop anywhere but the narrow rightmost sliver
+    // of a cell landed before it, never after, regardless of which side it
+    // visibly looked aimed at. Rounding to the nearest half instead means a
+    // drop on the right half of an icon lands after it even without
+    // dwelling, matching the dock's own fix for the same complaint.
+    val gap = if (withinCell < 0.5f) cellIndex else cellIndex + 1
+    val holdTarget = if (withinCell in FOLDER_ZONE_START..FOLDER_ZONE_END) cellIndex else null
+    return PageDropTarget(gap = gap, holdTarget = holdTarget)
 }
 
 // Widened from an earlier 0.3/0.7. A real finger can't hold still to the
