@@ -382,8 +382,20 @@ private fun displacedSlot(
     val origin = drag.origin
 
     return if (origin is HomeLocation.Page && origin.page == pageIndex) {
-        // Dragging within this page: the item is conceptually already gone
-        // from its old spot, and a gap opens at the hover point.
+        // Still hovering the cell it was lifted from: leave the whole page
+        // exactly as it was, so the gap sits open where the icon came from
+        // until the finger actually carries it somewhere else. Without this
+        // the neighbour slid into the vacated spot the instant the drag
+        // began - the finger starts out centred on its own old cell, which
+        // the maths below reads as hovering the icon that has just closed
+        // that gap, so it "holds still" there (see settle) right on top of
+        // where the lifted icon used to be.
+        val column = (drag.position.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
+        val row = ((drag.position.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
+        if (row * columns + column == origin.slot) return slot
+
+        // Carried elsewhere on this page: the item is conceptually already
+        // gone from its old spot, and a gap opens at the hover point.
         val withoutDragged = if (slot > origin.slot) slot - 1 else slot
         val itemsWithoutDragged = items.filterIndexed { i, _ -> i != origin.slot }
         val target = pageDropTarget(

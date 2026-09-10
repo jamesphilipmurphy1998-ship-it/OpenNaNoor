@@ -865,6 +865,19 @@ private fun Dock(
             if (dockWouldRefuse()) return slot
             val origin = drag.origin
             if (origin is HomeLocation.Dock) {
+                // Still hovering the icon it was lifted from: hold the whole
+                // dock still, leaving the gap open where it came from, until
+                // the finger actually carries it somewhere else. Same reason
+                // as HomePage's own version of this - the finger starts out
+                // over its own old slot, which otherwise reads as hovering
+                // whichever icon has just slid in to close that gap.
+                if (drag.overDock) {
+                    val (restGap, restPitch) = packing(items.size)
+                    val hovered = dockDropTarget(
+                        drag.position.x - localOrigin.x - restGap, restPitch, items.size - 1
+                    )
+                    if (hovered == origin.slot) return slot
+                }
                 val withoutDragged = if (slot > origin.slot) slot - 1 else slot
                 if (!drag.overDock) return withoutDragged
                 val (gapPx, pitchPx) = packing(previewCount())
@@ -1368,15 +1381,15 @@ private fun Modifier.pointerInputIf(
 private const val DRAWER_DRAG_THRESHOLD = 18f
 private const val EDGE_MARGIN_PX = 28f
 private const val EDGE_HOLD_MS = 1000L
-// A full page has an occupant in every single cell, unlike a normal page's
-// mix of icons and empty space - so on a full page, any reasonably-aimed
-// drop (people naturally aim for a cell's centre, which is exactly the
-// fold-zone) risks arming a fold, and the travel time alone from the dock
-// to a spot on a busy page can already approach the old 1000ms threshold
-// without the user feeling like they paused at all. Doubled so only a
-// genuinely deliberate hold - not just "however long it took to get here" -
-// arms a fold.
-private const val FOLDER_DWELL_MS = 2000L
+// How long a drag has to rest over an icon before its folder preview opens
+// and a drop there would merge rather than insert.
+//
+// This was briefly doubled to 2000ms on a theory that accidental folds were
+// behind drops merging instead of inserting. That theory was wrong - the
+// real cause was the drop-index math disagreeing with the rendering math
+// (fixed separately) - and the longer dwell only made the folder preview
+// feel sluggish to open, so it's back to 1000ms.
+private const val FOLDER_DWELL_MS = 1000L
 
 /**
  * How long a drop the dock refused takes to fly back where it came from -
