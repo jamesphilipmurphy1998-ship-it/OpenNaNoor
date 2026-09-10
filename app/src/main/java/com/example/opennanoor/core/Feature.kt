@@ -33,8 +33,8 @@ object FeatureCatalog {
     val all = listOf(
         Feature(
             id = ID_IOS_ICONS,
-            title = "iOS icon shape",
-            description = "Reshapes every app icon into Apple's squircle, full-bleed. Applies on the OpenNaNoor home screen.",
+            title = "iOS home screen",
+            description = "Apple-style icons, pages, dock, folders and the way apps move - the whole OpenNaNoor home screen experience in one switch.",
             requirement = Requirement.NONE,
             available = true
         ),
