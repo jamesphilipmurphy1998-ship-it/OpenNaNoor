@@ -105,7 +105,6 @@ fun HomePage(
                     slot = slot,
                     items = items,
                     columns = columns,
-                    rows = rows,
                     pageIndex = pageIndex,
                     drag = drag,
                     currentPage = currentPage(),
@@ -308,9 +307,17 @@ fun HomePage(
         if (spillEvent != null) {
             val capacity = columns * rows
             val lastSlot = capacity - 1
+            // Starts exactly where the live preview left the icon, NOT at
+            // the last cell. (lastSlot % columns) is columns-1 - one whole
+            // cell to the LEFT of the off-page position targetOffset() had
+            // already animated it to during the hover, which is to say
+            // back ON the page, in the last cell. Handing over there made
+            // the icon visibly jump a cell backwards onto the page before
+            // sliding off again: "for a flash it comes back on the page
+            // before going back again".
             val ghostBase = remember(pageIndex, columns, cellWidthPx, cellHeightPx, topPaddingPx) {
                 Offset(
-                    (lastSlot % columns) * cellWidthPx,
+                    columns * cellWidthPx,
                     topPaddingPx + (lastSlot / columns) * cellHeightPx
                 )
             }
@@ -361,7 +368,6 @@ private fun displacedSlot(
     slot: Int,
     items: List<HomeItem>,
     columns: Int,
-    rows: Int,
     pageIndex: Int,
     drag: DragCoordinator,
     currentPage: Int,
@@ -371,24 +377,7 @@ private fun displacedSlot(
 ): Int {
     val previewing = drag.active && !drag.folderArmed &&
         !drag.overDock && !drag.overRemoveZone && currentPage == pageIndex
-    if (!previewing) {
-        // drag.active flips false the instant a drop is released - a plain
-        // Compose State, reflected on the very next frame. items (part of
-        // LauncherUiState) only updates once it's travelled through the
-        // ViewModel's StateFlow and collectAsState(), which lags a frame
-        // behind. In that gap, this composable still sees the STALE,
-        // over-capacity list with drag.active already false: the last item
-        // (about to spill) would otherwise read as no longer previewing at
-        // all, snapping back to its own plain on-page position for that one
-        // frame before the real data - with it actually removed - finally
-        // lands and it disappears again, cut off mid-animation. Reported as
-        // "for a flash it comes back on the page before going back again."
-        // Keeping the last item's off-page treatment alive for as long as
-        // the list it's reading is still (stale-)over capacity closes that
-        // gap without needing drag state at all.
-        val capacity = columns * rows
-        return if (items.size > capacity && slot == items.size - 1) capacity else slot
-    }
+    if (!previewing) return slot
 
     val origin = drag.origin
 

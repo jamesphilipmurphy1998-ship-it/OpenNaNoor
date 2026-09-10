@@ -838,19 +838,31 @@ private fun Dock(
         // same way lifting an icon off a real dock behaves, rather than
         // leaving a hole there until the drag finishes somewhere else
         // entirely.
+        // A full dock is going to refuse this drop outright (see insertItem,
+        // and the ping-back in handleDragEnded) - so it shouldn't spend the
+        // hover pretending otherwise, squeezing its icons aside to open a
+        // gap that nothing can ever land in. Mirrors the same condition the
+        // rejection itself uses: an icon dragged FROM the dock always has
+        // room, since its own slot frees up first.
+        fun dockWouldRefuse(): Boolean =
+            drag.active &&
+                drag.origin !is HomeLocation.Dock &&
+                items.size >= slotCount
+
         fun previewCount(): Int {
             if (!drag.active) return items.size
             val origin = drag.origin
             return when {
                 origin is HomeLocation.Dock && !drag.overDock -> items.size - 1
                 origin is HomeLocation.Dock -> items.size
-                drag.overDock -> items.size + 1
+                drag.overDock && !dockWouldRefuse() -> items.size + 1
                 else -> items.size
             }
         }
 
         fun displacedSlot(slot: Int): Int {
             if (!drag.active) return slot
+            if (dockWouldRefuse()) return slot
             val origin = drag.origin
             if (origin is HomeLocation.Dock) {
                 val withoutDragged = if (slot > origin.slot) slot - 1 else slot
