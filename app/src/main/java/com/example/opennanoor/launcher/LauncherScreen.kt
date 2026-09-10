@@ -269,6 +269,7 @@ fun LauncherScreen(
                     editing = editing,
                     topPadding = topPadding,
                     drag = drag,
+                    currentPage = { pagerState.currentPage },
                     onLaunch = ::handleTap,
                     onEnterEditing = { onEditingChange(true) },
                     onDragMoved = ::handleDragMoved,
@@ -686,7 +687,7 @@ private fun FolderOverlay(
 }
 
 /** Which grid slot a drag position falls on, in the page's own coordinates. */
-private fun slotAt(
+internal fun slotAt(
     position: Offset,
     cellWidthPx: Float,
     cellHeightPx: Float,

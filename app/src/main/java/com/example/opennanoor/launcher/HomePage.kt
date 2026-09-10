@@ -48,6 +48,10 @@ fun HomePage(
     editing: Boolean,
     topPadding: Dp,
     drag: DragCoordinator,
+    /** Which page the pager is currently showing - only that page previews a
+     *  drop. Read lazily inside layout, never during composition, since it
+     *  is queried once per frame while a drag is in flight. */
+    currentPage: () -> Int,
     onLaunch: (HomeItem) -> Unit,
     onEnterEditing: () -> Unit,
     onDragMoved: (Offset) -> Unit,
@@ -72,15 +76,35 @@ fun HomePage(
             // the tile hides without anything recomposing.
             val thisLocation = HomeLocation.Page(pageIndex, slot)
 
-            val row = slot / columns
-            val column = slot % columns
-            val baseX = column * cellWidthPx
-            val baseY = topPaddingPx + row * cellHeightPx
+            val baseX = (slot % columns) * cellWidthPx
+            val baseY = topPaddingPx + (slot / columns) * cellHeightPx
 
             Box(
                 Modifier
                     .size(cellWidth, cellHeight)
-                    .offset { androidx.compose.ui.unit.IntOffset(baseX.toInt(), baseY.toInt()) }
+                    // Live displacement: while a drag hovers over this page
+                    // without dwelling long enough to fold, every tile from
+                    // the hover point onward previews where it would land by
+                    // sliding to that slot - the same thing iOS does. Purely
+                    // a read inside the layout lambda, computed fresh each
+                    // frame from the drag's current position; nothing here
+                    // is a composition-time value, so nothing recomposes.
+                    .offset {
+                        val display = displacedSlot(
+                            slot = slot,
+                            items = items,
+                            columns = columns,
+                            pageIndex = pageIndex,
+                            drag = drag,
+                            currentPage = currentPage(),
+                            cellWidthPx = cellWidthPx,
+                            cellHeightPx = cellHeightPx,
+                            topPaddingPx = topPaddingPx
+                        )
+                        val x = (display % columns) * cellWidthPx
+                        val y = topPaddingPx + (display / columns) * cellHeightPx
+                        androidx.compose.ui.unit.IntOffset(x.toInt(), y.toInt())
+                    }
                     // Keyed only on this cell's identity. Keying on `editing`
                     // or on the page's item list tore the gesture detector down
                     // and restarted it the instant a drag began - editing flips
@@ -135,6 +159,66 @@ fun HomePage(
             }
         }
     }
+}
+
+/**
+ * Where a tile should visually sit while a drag is (or isn't) hovering
+ * nearby. A pure function of the current drag state, called fresh from a
+ * layout lambda every frame - it must never be read during composition, for
+ * the same reason everything else about this drag is read lazily.
+ *
+ * Not shown at all (folding instead) once the hover has dwelled long enough
+ * to arm a folder merge, or while the drag is over the dock or the
+ * uninstall zone rather than this grid, or on any page but the one the
+ * pager is currently showing.
+ */
+private fun displacedSlot(
+    slot: Int,
+    items: List<HomeItem>,
+    columns: Int,
+    pageIndex: Int,
+    drag: DragCoordinator,
+    currentPage: Int,
+    cellWidthPx: Float,
+    cellHeightPx: Float,
+    topPaddingPx: Float
+): Int {
+    val previewing = drag.active && !drag.folderArmed &&
+        !drag.overDock && !drag.overRemoveZone && currentPage == pageIndex
+    if (!previewing) return slot
+
+    val hovered = slotAt(drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns)
+    val origin = drag.origin
+
+    return if (origin is HomeLocation.Page && origin.page == pageIndex) {
+        // Dragging within this page: the item is conceptually already gone
+        // from its old spot, and a gap opens at the hover point.
+        val withoutDragged = if (slot > origin.slot) slot - 1 else slot
+        val capacity = (items.size - 1).coerceAtLeast(0)
+        val gap = hovered.coerceIn(0, capacity)
+        val occupantAtGap = items.withIndex()
+            .filter { it.index != origin.slot }
+            .getOrNull(gap)?.value
+        settle(withoutDragged, gap, occupantAtGap)
+    } else {
+        // Arriving from elsewhere (another page, the dock, a folder, or the
+        // drawer): nothing has left this page, so a gap simply opens.
+        val gap = hovered.coerceIn(0, items.size)
+        settle(slot, gap, items.getOrNull(gap))
+    }
+}
+
+/**
+ * A folder sitting exactly at the gap a drag is hovering over holds its
+ * position rather than sliding aside - hovering directly on it means
+ * "drop in", not "insert before or after", so it should look like a
+ * landing target, not something in the way. Anything else at or past the
+ * gap slides over as usual.
+ */
+private fun settle(adjustedSlot: Int, gap: Int, occupant: HomeItem?): Int = when {
+    adjustedSlot == gap && occupant is HomeItem.FolderItem -> adjustedSlot
+    adjustedSlot >= gap -> adjustedSlot + 1
+    else -> adjustedSlot
 }
 
 /** The small circled minus that takes an item off the home screen. */
