@@ -2,6 +2,8 @@ package com.example.opennanoor.launcher
 
 import android.content.ComponentName
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -421,6 +423,77 @@ fun LauncherScreen(
         // be enough for Compose to cancel the gesture outright: onDragCancel
         // was firing within ~15ms of onDragStart, before any real movement.
         DragGhost(drag = drag)
+
+        // The folder someone is dwelling on to drop into expands into a
+        // real 2x2 preview of what's inside, the way iOS shows it - rather
+        // than just a swelling highlight. drag.folderArmed only flips once
+        // per dwell lock (not on every pixel of movement, unlike position),
+        // so reading it here in composition is the same category of
+        // infrequent change RemoveZone's own visibility already relies on
+        // safely - not the continuous kind that cancels a live gesture.
+        val armedFolder = drag.hoverTarget
+            ?.let { it as? HomeLocation.Page }
+            ?.takeIf { drag.folderArmed && it.page == pagerState.currentPage }
+            ?.let { loc ->
+                pageItemsForPreview(state, loc.page, null)
+                    ?.getOrNull(loc.slot) as? HomeItem.FolderItem
+            }
+
+        AnimatedVisibility(
+            visible = armedFolder != null,
+            enter = scaleIn(initialScale = 0.6f) + fadeIn(),
+            exit = scaleOut(targetScale = 0.6f) + fadeOut()
+        ) {
+            val folder = armedFolder
+            val loc = drag.hoverTarget as? HomeLocation.Page
+            if (folder != null && loc != null) {
+                val centreX = (loc.slot % state.columns) * cellWidthPx + cellWidthPx / 2f
+                val centreY = topPaddingPx + (loc.slot / state.columns) * cellHeightPx + cellHeightPx / 2f
+                FolderPreview(
+                    folder = folder,
+                    centreOffsetPx = Offset(centreX, centreY),
+                    cellSizePx = cellWidthPx
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A real preview of a folder's contents - up to four of its icons in a 2x2
+ * grid - grown to roughly twice a normal tile's size and centred on the
+ * folder being dwelled over. Dropping while this is showing merges into the
+ * same folder it shows; it isn't just decoration standing in for that.
+ */
+@Composable
+private fun FolderPreview(folder: HomeItem.FolderItem, centreOffsetPx: Offset, cellSizePx: Float) {
+    val density = LocalDensity.current
+    val sizeDp = with(density) { (cellSizePx * 2.1f).toDp() }
+
+    Box(
+        Modifier
+            .offset {
+                IntOffset(
+                    (centreOffsetPx.x - cellSizePx * 1.05f).toInt(),
+                    (centreOffsetPx.y - cellSizePx * 1.05f).toInt()
+                )
+            }
+            .size(sizeDp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(Color(0xFF2C2C2E))
+            .padding(12.dp)
+    ) {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(2),
+            modifier = Modifier.fillMaxSize(),
+            userScrollEnabled = false,
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(folder.items.take(4), key = { it.id }) { appItem ->
+                HomeItemTile(item = appItem, onClick = {}, showLabel = false)
+            }
+        }
     }
 }
 

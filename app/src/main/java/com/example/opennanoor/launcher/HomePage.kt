@@ -166,7 +166,11 @@ fun HomePage(
                     Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            alpha = if (drag.origin == thisLocation) 0f else 1f
+                            val isOrigin = drag.origin == thisLocation
+                            val isExpandedFolder = drag.folderArmed &&
+                                drag.hoverTarget == thisLocation &&
+                                item is HomeItem.FolderItem
+                            alpha = if (isOrigin || isExpandedFolder) 0f else 1f
                         },
                     contentAlignment = Alignment.Center
                 ) {
