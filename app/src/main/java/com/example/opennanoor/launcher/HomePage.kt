@@ -170,7 +170,19 @@ fun HomePage(
             val dropped = justDropped
                 ?.takeIf { it.itemId == item.id && it.location == thisLocation }
             LaunchedEffect(pageIndex, slot, dropped != null) {
-                dropped?.let { animatedOffset.snapTo(it.fromPosition) }
+                // fromPosition is where the ghost's own centre was - the
+                // ghost is a fixed-size box centred on the finger, while
+                // this tile is a full cellWidth x cellHeight box positioned
+                // by its top-left corner with its content centred inside
+                // it. Snapping straight to fromPosition as that corner put
+                // the icon a half-cell down and to the right of where the
+                // ghost actually was, so it visibly started below-right of
+                // the target and slid up into it instead of arriving there
+                // directly. Subtracting half the cell size aligns this
+                // tile's own centre with the ghost's last centre instead.
+                dropped?.let {
+                    animatedOffset.snapTo(it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f))
+                }
                 snapshotFlow { targetOffset() }
                     .collectLatest { target ->
                         animatedOffset.animateTo(target, tween(REFLOW_ANIMATION_MS))

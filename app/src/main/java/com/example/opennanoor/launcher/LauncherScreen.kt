@@ -827,7 +827,19 @@ private fun Dock(
             // picked up the new, wider spacing - they just kept their old
             // positions with the freed space sitting unused past them.
             LaunchedEffect(slot, items.size, dropped != null) {
-                dropped?.let { animatedOffset.snapTo(it.fromPosition) }
+                // fromPosition is in the shared outer frame the ghost is
+                // drawn in (same one drag.position always is), but this
+                // tile's own x is local to the dock's left edge (localOrigin
+                // is that translation, same as dockBounds' own) - and the
+                // ghost is centred on fromPosition while this tile is a
+                // fixed iconPx-wide box positioned by its left edge. Both
+                // corrections together are what HomePage's version does in
+                // one step; the dock needs the extra frame conversion since
+                // its tiles don't already live in that outer frame the way
+                // a page's do.
+                dropped?.let {
+                    animatedOffset.snapTo(Offset(it.fromPosition.x - localOrigin.x - iconPx / 2f, 0f))
+                }
                 androidx.compose.runtime.snapshotFlow { targetX(slot) }
                     .collectLatest { x ->
                         animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
