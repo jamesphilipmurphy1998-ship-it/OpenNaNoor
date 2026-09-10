@@ -167,16 +167,25 @@ fun HomePage(
                         .fillMaxSize()
                         .graphicsLayer {
                             val isOrigin = drag.origin == thisLocation
-                            val isExpandedFolder = drag.folderArmed &&
-                                drag.hoverTarget == thisLocation &&
-                                item is HomeItem.FolderItem
-                            alpha = if (isOrigin || isExpandedFolder) 0f else 1f
+                            // Hidden while its own expanded preview shows -
+                            // whether it's an existing folder, or a plain
+                            // app about to become one (the preview now
+                            // covers both).
+                            val isExpanded = drag.folderArmed &&
+                                drag.hoverTarget == thisLocation
+                            alpha = if (isOrigin || isExpanded) 0f else 1f
                         },
                     contentAlignment = Alignment.Center
                 ) {
                     HomeItemTile(
                         item = item,
-                        onClick = { if (!editing) onLaunch(item) },
+                        // Arranging blocks launching an app by accident,
+                        // but a folder should still open - you can rearrange
+                        // or pull things out of it the same way, its
+                        // contents just wobble too, matching iOS.
+                        onClick = {
+                            if (item is HomeItem.FolderItem || !editing) onLaunch(item)
+                        },
                         wobble = editing,
                         wobbleSeed = slot
                     )

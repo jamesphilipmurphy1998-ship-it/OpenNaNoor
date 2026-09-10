@@ -424,6 +424,7 @@ fun LauncherScreen(
                 folder = folder,
                 insets = insets,
                 dimmed = draggingOutOfThis,
+                homeEditing = editing,
                 onLaunch = onLaunchApp,
                 onDismiss = onCloseFolder,
                 onRemoveItem = { componentId -> onRemoveFromFolder(folder.folderId, componentId) },
@@ -454,12 +455,25 @@ fun LauncherScreen(
         // so reading it here in composition is the same category of
         // infrequent change RemoveZone's own visibility already relies on
         // safely - not the continuous kind that cancels a live gesture.
+        // A plain app being dwelled on (about to form a brand new folder,
+        // not join an existing one) gets the same expanded preview now too -
+        // built on the fly from the two apps that would end up in it, since
+        // there is no real folder yet to read contents from.
         val armedFolder = drag.hoverTarget
             ?.let { it as? HomeLocation.Page }
             ?.takeIf { drag.folderArmed && it.page == pagerState.currentPage }
             ?.let { loc ->
-                pageItemsForPreview(state, loc.page, null)
-                    ?.getOrNull(loc.slot) as? HomeItem.FolderItem
+                val occupant = pageItemsForPreview(state, loc.page, null)?.getOrNull(loc.slot)
+                when {
+                    occupant is HomeItem.FolderItem -> occupant
+                    occupant is HomeItem.AppItem && drag.item is HomeItem.AppItem ->
+                        HomeItem.FolderItem(
+                            folderId = "preview",
+                            name = "New Folder",
+                            items = listOf(occupant, drag.item as HomeItem.AppItem)
+                        )
+                    else -> null
+                }
             }
 
         AnimatedVisibility(
@@ -614,7 +628,9 @@ private fun Dock(
                     ) {
                         HomeItemTile(
                             item = item,
-                            onClick = { if (!editing) onTap(item) },
+                            onClick = {
+                                if (item is HomeItem.FolderItem || !editing) onTap(item)
+                            },
                             showLabel = false,
                             wobble = editing,
                             modifier = Modifier.alpha(if (isDragOrigin) 0f else 1f)
@@ -732,6 +748,11 @@ private fun FolderOverlay(
     folder: HomeItem.FolderItem,
     insets: PaddingValues,
     dimmed: Boolean,
+    // Opening a folder while the home screen is already in arranging mode
+    // should show its contents already wobbling, not reset to still - this
+    // seeds that, but arranging inside the folder can still be entered or
+    // left independently of it afterwards.
+    homeEditing: Boolean,
     onLaunch: (LaunchableApp) -> Unit,
     onDismiss: () -> Unit,
     onRemoveItem: (componentId: String) -> Unit,
@@ -740,7 +761,7 @@ private fun FolderOverlay(
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit
 ) {
-    var editing by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf(homeEditing) }
     // Light enough that the blurred home screen behind genuinely reads
     // through it - a frosted pane, not a solid one - while still giving
     // the folder's own icons somewhere legible to sit.
