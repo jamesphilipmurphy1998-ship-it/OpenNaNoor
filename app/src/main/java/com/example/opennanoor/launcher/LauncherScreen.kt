@@ -256,17 +256,41 @@ fun LauncherScreen(
                     drag.overDock -> {
                         val bounds = dockBounds
                         val dockSlot = if (bounds != null && bounds.width > 0f) {
-                            val cellW = bounds.width / state.dockIconCount
-                            // Same gap math the live push-preview in Dock
-                            // used while this was still hovering, against
-                            // however many icons the dock will actually
-                            // hold once this drop's own source slot (if it
-                            // came from the dock itself) is removed - the
-                            // same count insertItem's own clamp resolves
-                            // against.
+                            // However many icons the dock will actually hold
+                            // once this drop's own source slot (if it came
+                            // from the dock itself) is removed - the same
+                            // count insertItem's own clamp resolves against.
                             val itemCount = state.dock.size -
                                 if (drag.origin is HomeLocation.Dock) 1 else 0
-                            dockDropTarget(drag.position.x - bounds.left, cellW, itemCount)
+                            // Must exactly match Dock's own packing() - icons
+                            // are centred with n+1 equal gaps, not spread
+                            // evenly across dockIconCount cells. Using the
+                            // plain bounds.width/dockIconCount division this
+                            // used to use ignored that centring and the
+                            // actual icon size entirely, so the index this
+                            // resolved to routinely disagreed with whatever
+                            // the live preview (and the on-screen icons
+                            // themselves) had just been showing - the drop
+                            // landing somewhere other than where it visibly
+                            // was aimed.
+                            // Dock's own live preview packs for one MORE
+                            // icon than are here now when this is an arrival
+                            // from outside (see previewCount) - reserving
+                            // the squeeze the incoming icon will need, right
+                            // up until release. Resolving the final index
+                            // against the un-squeezed current packing instead
+                            // would disagree with the spacing the icons were
+                            // actually just shown at.
+                            val packingCount = if (drag.origin is HomeLocation.Dock) {
+                                itemCount
+                            } else {
+                                itemCount + 1
+                            }
+                            val iconPx = with(density) { dockIconSize(state.dockIconCount).toPx() }
+                            val n = packingCount.coerceAtLeast(1)
+                            val gapPx = ((bounds.width - iconPx * n) / (n + 1)).coerceAtLeast(0f)
+                            val pitchPx = iconPx + gapPx
+                            dockDropTarget(drag.position.x - bounds.left - gapPx, pitchPx, itemCount)
                         } else 0
                         HomeLocation.Dock(dockSlot)
                     }
@@ -920,8 +944,16 @@ private fun Dock(
  * into a folder, so there is no hold-to-fold zone to carve out of this the
  * way [pageDropTarget] has to.
  */
+// Rounds to the nearest slot boundary rather than flooring to the one an
+// icon's own left edge sits on - flooring meant hovering ANYWHERE within an
+// icon's cell, including its whole right half, still resolved to "insert
+// before this icon": there was no way to land a drop after an icon at all
+// without dragging past it into the following icon's own cell. Adding half
+// a pitch before dividing is the standard nearest-boundary rounding this
+// needs - past an icon's midpoint counts as "after it" the way it visibly
+// looks like it should.
 internal fun dockDropTarget(localX: Float, cellWidthPx: Float, itemCount: Int): Int =
-    if (cellWidthPx <= 0f) 0 else (localX / cellWidthPx).toInt().coerceIn(0, itemCount)
+    if (cellWidthPx <= 0f) 0 else ((localX + cellWidthPx / 2f) / cellWidthPx).toInt().coerceIn(0, itemCount)
 
 @Composable
 private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
