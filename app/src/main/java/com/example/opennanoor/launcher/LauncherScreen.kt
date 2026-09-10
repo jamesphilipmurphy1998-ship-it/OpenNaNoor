@@ -693,21 +693,62 @@ private fun Dock(
         // from the dock's own left edge, the same conversion dockBounds
         // itself goes through one layer up.
         var localOrigin by remember { mutableStateOf(Offset.Zero) }
-        val cellWidthPx = with(density) { maxWidth.toPx() } / slotCount
+
+        // Icons are a fixed size now (see dockIconSize), and spaced by how
+        // many are actually in the dock right now - not the capacity the
+        // count setting allows - so 2 sit centred and evenly spaced same as
+        // 3, 4 or 5 do, each narrower gap only as more icons are actually
+        // added. Splitting the available width evenly into slotCount cells
+        // instead, regardless of fill, could make a cell narrower than the
+        // icon inside it - a centred icon wider than its own cell spills
+        // out of it, and the outermost icons had nowhere to spill into but
+        // past the dock's own edge.
+        val iconPx = with(density) { iconSize.toPx() }
+        val availablePx = with(density) { maxWidth.toPx() }
+
+        // gapPx for spacing count icons evenly, including the margin
+        // before the first and after the last - count+1 equal gaps around
+        // count icons is what centres them.
+        fun packing(count: Int): Pair<Float, Float> {
+            val n = count.coerceAtLeast(1)
+            val gap = ((availablePx - iconPx * n) / (n + 1)).coerceAtLeast(0f)
+            return gap to (iconPx + gap)
+        }
+
+        val (restGapPx, restPitchPx) = packing(items.size)
+
+        // While a drag is hovering, the spacing itself previews squeezing
+        // to make room: one more icon than are here now if this is an
+        // arrival from outside (the drawer, a page, another dock slot's
+        // worth of room isn't being asked for since nothing new is being
+        // added) - reordering within the dock doesn't change how many are
+        // here, just which order.
+        fun previewCount(): Int {
+            if (!(drag.active && drag.overDock)) return items.size
+            return if (drag.origin is HomeLocation.Dock) items.size else items.size + 1
+        }
 
         fun displacedSlot(slot: Int): Int {
             val previewing = drag.active && drag.overDock
             if (!previewing) return slot
-            val localX = drag.position.x - localOrigin.x
+            val (gapPx, pitchPx) = packing(previewCount())
+            val localX = drag.position.x - localOrigin.x - gapPx
             val origin = drag.origin
             return if (origin is HomeLocation.Dock) {
                 val withoutDragged = if (slot > origin.slot) slot - 1 else slot
-                val gap = dockDropTarget(localX, cellWidthPx, items.size - 1)
+                val gap = dockDropTarget(localX, pitchPx, items.size - 1)
                 if (withoutDragged >= gap) withoutDragged + 1 else withoutDragged
             } else {
-                val gap = dockDropTarget(localX, cellWidthPx, items.size)
+                val gap = dockDropTarget(localX, pitchPx, items.size)
                 if (slot >= gap) slot + 1 else slot
             }
+        }
+
+        fun targetX(slot: Int): Float {
+            val display = displacedSlot(slot)
+            val previewing = drag.active && drag.overDock
+            val (gapPx, pitchPx) = if (previewing) packing(previewCount()) else restGapPx to restPitchPx
+            return gapPx + display * pitchPx
         }
 
         Box(
@@ -728,12 +769,14 @@ private fun Dock(
             // page - deferred to layout/draw, never read during
             // composition, for the same drag-cancelling reason explained
             // there.
-            val basePosition = remember(slot, cellWidthPx) { Offset(slot * cellWidthPx, 0f) }
+            val basePosition = remember(slot, restGapPx, restPitchPx) {
+                Offset(restGapPx + slot * restPitchPx, 0f)
+            }
             val animatedOffset = remember(slot) { Animatable(basePosition, Offset.VectorConverter) }
             LaunchedEffect(slot) {
-                androidx.compose.runtime.snapshotFlow { displacedSlot(slot) }
-                    .collectLatest { display ->
-                        animatedOffset.animateTo(Offset(display * cellWidthPx, 0f), tween(REFLOW_ANIMATION_MS))
+                androidx.compose.runtime.snapshotFlow { targetX(slot) }
+                    .collectLatest { x ->
+                        animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
                     }
             }
 
@@ -749,7 +792,7 @@ private fun Dock(
             // made invisible, so the gesture handler survives.
             Box(
                 Modifier
-                    .size(with(density) { cellWidthPx.toDp() }, maxHeight)
+                    .size(with(density) { iconPx.toDp() }, maxHeight)
                     .offset {
                         val p = animatedOffset.value
                         IntOffset(p.x.toInt(), p.y.toInt())
