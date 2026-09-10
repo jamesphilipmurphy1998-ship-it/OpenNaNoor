@@ -145,48 +145,61 @@ fun HomePage(
             // tile's layout, not a recomposition that could reach the
             // pager and cancel whichever tile's gesture is live.
             //
-            // Seeded with the tile's plain, undisplaced position - not
-            // targetOffset() - so the very first composition of a tile
-            // (a genuinely new arrival, or paging to a new screen) never
-            // reads drag state inside a remember{} initializer, which runs
-            // during composition. The snapshotFlow below corrects it to the
-            // true displaced position on its first emission, a frame later
-            // at most. The one exception is the item that was just released
-            // here - justDropped is plain composable state, not live drag
-            // state, so reading it here carries none of that risk, and
-            // seeding at wherever its drag ghost actually was (its centre,
-            // matching how the box below centres its own content) instead
-            // of the plain grid position means its very first render already
-            // continues the ghost's motion instead of popping in below-right
-            // of it. Both remember calls below are unkeyed beyond the
-            // key(item.id) already wrapping this whole tile - that's what
-            // makes them run exactly once, when this app first appears here,
-            // and never again just because a later drop changes which slot
-            // it's rendered at.
-            val dropped = justDropped
-                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+            // Seeded with the tile's plain, undisplaced position - never
+            // reads drag state inside this remember{} initializer, which
+            // runs during composition. basePosition/animatedOffset are
+            // unkeyed beyond key(item.id) above, so this only runs once,
+            // the first time this app appears on this page at all.
             val basePosition = remember {
-                dropped?.let { it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f) }
-                    ?: Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
+                Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
-            // Keyed on slot after all, even though the Animatable above
-            // isn't - targetOffset() is a plain local function, closing
-            // over THIS composition's slot/item, not a reactive read
-            // snapshotFlow can notice changing on its own. Leaving this
-            // effect unkeyed (as an earlier version of this fix did) meant
-            // it kept running the coroutine from this tile's very first
-            // launch forever, permanently closed over whatever slot that
-            // was - so a later push that moved this same app to a new slot
-            // never updated where it animated to, while the item that
-            // took over its OLD slot got its own fresh effect there too:
-            // two different apps' tiles both animating toward the same
-            // pixel position, rendered exactly on top of each other.
-            // Restarting on a slot change fixes that without undoing the
-            // point of key(item.id) above - animatedOffset itself isn't
-            // re-created, so restarting merely resumes tracking from
-            // wherever it already was, not a reset.
-            LaunchedEffect(slot) {
+
+            // The item that was just released here snaps to wherever its
+            // drag ghost actually was (the ghost's own centre, matching how
+            // the box below centres its own content) before resuming normal
+            // tracking - justDropped is plain composable state, not live
+            // drag state, so reading it here carries none of the
+            // composition-time risk the seeding above is about.
+            //
+            // This can't be handled by seeding basePosition once at first
+            // composition the way SpillEvent's ghost is: a REORDER drops an
+            // app that was already on this page, whose key(item.id) block
+            // (and Animatable) has existed since long before this drop - it
+            // was never a fresh composition remember{} could catch. Without
+            // this, only a genuinely new arrival (from the drawer, another
+            // page, the dock) got seeded correctly; a same-page reorder's
+            // origin tile - hidden but still being animated by the live
+            // hover preview's own slot-based settle() math the whole time,
+            // never actually tracking the real finger position - just
+            // reappeared from wherever that discrete preview last placed
+            // it, not from the ghost, which is what "comes in from an angle
+            // I wasn't holding it" turned out to mean.
+            //
+            // Keyed on slot (see below for why) and on whether this tile
+            // currently matches a drop - not on the drop's identity, so a
+            // later, different drop landing here still triggers this again
+            // even though the key(item.id) block is the same.
+            val dropped = justDropped
+                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+            LaunchedEffect(slot, dropped != null) {
+                dropped?.let {
+                    animatedOffset.snapTo(it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f))
+                }
+                // Keyed on slot too - targetOffset() is a plain local
+                // function, closing over THIS composition's slot/item, not
+                // a reactive read snapshotFlow can notice changing on its
+                // own. Leaving slot out of this key meant an app pushed to
+                // a new slot kept animating toward its OLD slot's position
+                // forever, while whatever took over that old slot got its
+                // own fresh effect there too - two different apps' tiles
+                // both animating toward the same pixel position, rendered
+                // exactly on top of each other. Restarting doesn't undo the
+                // point of key(item.id) above - animatedOffset itself is
+                // still unkeyed, so a restart (for either reason) just
+                // resumes tracking from wherever it already was, not a
+                // reset - except right after the snapTo above, which is the
+                // one deliberate exception.
                 snapshotFlow { targetOffset() }
                     .collectLatest { target ->
                         animatedOffset.animateTo(target, tween(REFLOW_ANIMATION_MS))

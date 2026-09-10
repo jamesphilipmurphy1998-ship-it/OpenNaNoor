@@ -835,45 +835,54 @@ private fun Dock(
             val thisLocation = HomeLocation.Dock(slot)
             val isDragOrigin = drag.active && drag.origin == thisLocation
 
-            // Seeded with the plain resting position, except for the icon
-            // that was just released here (justDropped is plain composable
-            // state, safe to read at composition time) - that one seeds at
-            // wherever its drag ghost actually was instead, so its very
-            // first render already continues the ghost's motion. fromPosition
-            // is in the shared outer frame the ghost is drawn in, but this
-            // icon's own x is local to the dock's left edge (localOrigin is
-            // that same translation dockBounds itself uses), and the ghost
-            // is centred on fromPosition while this icon is a fixed
-            // iconPx-wide box positioned by its left edge - both corrections
-            // are what HomePage's version does in one step for a page tile,
-            // which already lives in that outer frame the way a dock icon
-            // doesn't. Unkeyed beyond key(item.id) above, so this only ever
-            // runs once, when this app first appears in the dock.
-            val dropped = justDropped
-                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+            // Seeded with the plain resting position - unkeyed beyond
+            // key(item.id) above, so this only ever runs once, when this
+            // app first appears in the dock at all.
             val basePosition = remember {
-                dropped?.let { Offset(it.fromPosition.x - localOrigin.x - iconPx / 2f, 0f) }
-                    ?: Offset(restGapPx + slot * restPitchPx, 0f)
+                Offset(restGapPx + slot * restPitchPx, 0f)
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
-            // Keyed on both slot and items.size, even with key(item.id) now
-            // giving every icon a stable identity across a slot change.
-            // targetX(slot) is a plain local function, closing over THIS
-            // composition's slot - not a reactive read the snapshotFlow
-            // below can notice changing on its own - so leaving slot out of
-            // this key meant an icon that got pushed to a new slot kept
-            // this same effect running forever, permanently closed over its
-            // OLD slot, while whatever took over that old slot got its own
-            // fresh effect targeting the very same position: two icons
-            // rendered exactly on top of each other. items.size stays for
-            // the separate reason it was added before - a plain captured
-            // val (restGapPx/restPitchPx, not Compose state) inside an
-            // already-running collector doesn't refresh just because the
-            // count changed, if slot alone didn't also change. Restarting
-            // doesn't reset animatedOffset itself (that's unkeyed, kept
-            // alive by key(item.id) above), so this only ever resumes
-            // tracking from wherever it already was, not a fresh jump.
-            LaunchedEffect(slot, items.size) {
+
+            // The icon that was just released here snaps to wherever its
+            // drag ghost actually was, before resuming normal tracking -
+            // justDropped is plain composable state, safe to read here.
+            // fromPosition is in the shared outer frame the ghost is drawn
+            // in, but this icon's own x is local to the dock's left edge
+            // (localOrigin is that same translation dockBounds itself
+            // uses), and the ghost is centred on fromPosition while this
+            // icon is a fixed iconPx-wide box positioned by its left edge -
+            // both corrections are what HomePage's version does in one step
+            // for a page tile, which already lives in that outer frame the
+            // way a dock icon doesn't.
+            //
+            // Can't be handled by seeding basePosition once at first
+            // composition: a REORDER drops an icon that was already in the
+            // dock, whose key(item.id) block has existed since before this
+            // drop - never a fresh composition remember{} could catch. Only
+            // a genuinely new arrival got seeded correctly that way; a
+            // same-dock reorder's icon - hidden but still being animated by
+            // the live preview's own slot-based math the whole time, never
+            // actually tracking the real finger - just reappeared from
+            // wherever that left it, not from the ghost.
+            val dropped = justDropped
+                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+            // Keyed on slot, items.size, and now whether this tile currently
+            // matches a drop (not the drop's identity, so a later different
+            // drop landing here still retriggers this even though the
+            // key(item.id) block is the same). slot and items.size stay for
+            // the reasons explained the first time this was fixed: targetX
+            // (slot) is a plain local function whose closure snapshotFlow
+            // alone won't refresh, and restGapPx/restPitchPx are plain
+            // captured vals, not Compose state, so a collector already
+            // running doesn't notice either changing on its own. Restarting
+            // doesn't reset animatedOffset itself (unkeyed, kept alive by
+            // key(item.id) above), so this only resumes tracking from
+            // wherever it already was, not a fresh jump - except right
+            // after the snapTo below, the one deliberate exception.
+            LaunchedEffect(slot, items.size, dropped != null) {
+                dropped?.let {
+                    animatedOffset.snapTo(Offset(it.fromPosition.x - localOrigin.x - iconPx / 2f, 0f))
+                }
                 androidx.compose.runtime.snapshotFlow { targetX(slot) }
                     .collectLatest { x ->
                         animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
