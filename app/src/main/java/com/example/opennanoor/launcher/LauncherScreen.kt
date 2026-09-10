@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
@@ -212,6 +213,16 @@ fun LauncherScreen(
             drag.end()
         }
 
+        // Entering arranging mode is driven by drag.active rather than
+        // called directly from the gesture callback above. Flipping it
+        // synchronously inside onDragStart triggered a same-frame
+        // recomposition (remove badges appearing on every other tile) that
+        // was disrupting Compose's tracking of the still-active gesture -
+        // the drag would start, then die with zero move events recorded.
+        LaunchedEffect(drag.active) {
+            if (drag.active) onEditingChange(true)
+        }
+
         // Resting over one slot for this long arms the folder merge, and
         // shows it by swelling the target tile.
         LaunchedEffect(drag.hoverTarget) {
@@ -352,22 +363,38 @@ fun LauncherScreen(
             )
         }
 
-        if (drag.active) {
-            DragGhost(item = drag.item!!, position = drag.position)
-        }
+        // Always composed rather than conditionally inserted, and hidden via
+        // alpha instead. Adding it to the tree only once a drag begins was a
+        // structural change to this Box while a tile deep inside the pager
+        // had an active raw pointer-input gesture running - and that seems to
+        // be enough for Compose to cancel the gesture outright: onDragCancel
+        // was firing within ~15ms of onDragStart, before any real movement.
+        DragGhost(drag = drag)
     }
 }
 
-/** The floating tile that tracks the finger during a drag. */
+/**
+ * The floating tile that tracks the finger during a drag.
+ *
+ * Position and visibility are read inside layout and draw lambdas rather
+ * than during composition. Reading them in composition made this screen -
+ * and with it the tile whose gesture was in flight - recompose on every
+ * movement, which Compose answered by cancelling the drag.
+ */
 @Composable
-private fun DragGhost(item: HomeItem, position: Offset) {
+private fun DragGhost(drag: DragCoordinator) {
     Box(
         Modifier
-            .offset { IntOffset(position.x.toInt(), position.y.toInt()) }
+            .offset { IntOffset(drag.position.x.toInt(), drag.position.y.toInt()) }
             .size(GHOST_SIZE)
-            .scale(GHOST_SCALE)
+            .graphicsLayer {
+                val shown = drag.item != null
+                alpha = if (shown) 1f else 0f
+                scaleX = GHOST_SCALE
+                scaleY = GHOST_SCALE
+            }
     ) {
-        HomeItemTile(item = item, onClick = {})
+        drag.item?.let { HomeItemTile(item = it, onClick = {}) }
     }
 }
 
@@ -420,7 +447,6 @@ private fun Dock(
                         Modifier.pointerInput(index) {
                             detectDragGesturesAfterLongPress(
                                 onDragStart = { offset ->
-                                    onEnterEditing()
                                     drag.start(
                                         item = item,
                                         origin = HomeLocation.Dock(index),

@@ -1,5 +1,6 @@
 package com.example.opennanoor.launcher
 
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -16,6 +17,7 @@ import androidx.compose.ui.geometry.Offset
  * one Box), that position means the same thing regardless of which page the
  * pager is currently showing, so no per-page bookkeeping is needed.
  */
+@Stable
 class DragCoordinator {
     var item by mutableStateOf<HomeItem?>(null)
         private set

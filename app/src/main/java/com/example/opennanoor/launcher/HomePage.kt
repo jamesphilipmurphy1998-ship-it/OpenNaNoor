@@ -23,9 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
@@ -69,12 +69,13 @@ fun HomePage(
         val topPaddingPx = with(density) { topPadding.toPx() }
 
         items.forEachIndexed { slot, item ->
-            // The dragged tile's contents are hidden - the floating ghost
-            // stands in for it - but its Box stays composed. Removing it
-            // would unmount the pointerInput tracking the finger and kill
-            // the drag the moment it started.
-            val isDragOrigin = drag.active &&
-                drag.origin == HomeLocation.Page(pageIndex, slot)
+            // Deliberately NOT read during composition. Recomposing this
+            // subtree while its own pointerInput has a live gesture running
+            // detaches the handler and Compose cancels the drag - measured at
+            // ~15ms after onDragStart, before any real movement. Reading it
+            // inside a graphicsLayer lambda defers it to the draw phase, so
+            // the tile hides without anything recomposing.
+            val thisLocation = HomeLocation.Page(pageIndex, slot)
 
             val row = slot / columns
             val column = slot % columns
@@ -93,7 +94,6 @@ fun HomePage(
                     .pointerInput(pageIndex, slot) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
-                                onEnterEditing()
                                 drag.start(
                                     item = item,
                                     origin = HomeLocation.Page(pageIndex, slot),
@@ -121,7 +121,9 @@ fun HomePage(
                     Modifier
                         .fillMaxSize()
                         .scale(armedScale)
-                        .alpha(if (isDragOrigin) 0f else 1f),
+                        .graphicsLayer {
+                            alpha = if (drag.origin == thisLocation) 0f else 1f
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     if (armed) {
@@ -140,7 +142,7 @@ fun HomePage(
                         wobbleSeed = slot
                     )
                 }
-                if (editing && !isDragOrigin) {
+                if (editing) {
                     RemoveBadge(
                         onClick = { onRemove(slot) },
                         modifier = Modifier.align(Alignment.TopStart)
