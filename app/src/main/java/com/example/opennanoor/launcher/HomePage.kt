@@ -105,6 +105,7 @@ fun HomePage(
                     slot = slot,
                     items = items,
                     columns = columns,
+                    rows = rows,
                     pageIndex = pageIndex,
                     drag = drag,
                     currentPage = currentPage(),
@@ -360,6 +361,7 @@ private fun displacedSlot(
     slot: Int,
     items: List<HomeItem>,
     columns: Int,
+    rows: Int,
     pageIndex: Int,
     drag: DragCoordinator,
     currentPage: Int,
@@ -369,7 +371,24 @@ private fun displacedSlot(
 ): Int {
     val previewing = drag.active && !drag.folderArmed &&
         !drag.overDock && !drag.overRemoveZone && currentPage == pageIndex
-    if (!previewing) return slot
+    if (!previewing) {
+        // drag.active flips false the instant a drop is released - a plain
+        // Compose State, reflected on the very next frame. items (part of
+        // LauncherUiState) only updates once it's travelled through the
+        // ViewModel's StateFlow and collectAsState(), which lags a frame
+        // behind. In that gap, this composable still sees the STALE,
+        // over-capacity list with drag.active already false: the last item
+        // (about to spill) would otherwise read as no longer previewing at
+        // all, snapping back to its own plain on-page position for that one
+        // frame before the real data - with it actually removed - finally
+        // lands and it disappears again, cut off mid-animation. Reported as
+        // "for a flash it comes back on the page before going back again."
+        // Keeping the last item's off-page treatment alive for as long as
+        // the list it's reading is still (stale-)over capacity closes that
+        // gap without needing drag state at all.
+        val capacity = columns * rows
+        return if (items.size > capacity && slot == items.size - 1) capacity else slot
+    }
 
     val origin = drag.origin
 

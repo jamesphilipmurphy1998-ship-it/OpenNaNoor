@@ -7,7 +7,9 @@ import android.os.Build
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
@@ -78,6 +80,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.pointerInput
@@ -313,6 +316,46 @@ fun LauncherScreen(
                 val fold = drag.folderArmed && drag.hoverTarget == target
                 val origin = drag.origin
 
+                // A full dock rejects this drop outright (see insertItem) -
+                // nothing moves, so without this the ghost would simply
+                // blink out and the icon reappear at home with no motion at
+                // all, giving no sign the drop was refused rather than
+                // silently lost. Mirrors insertItem's own condition: a drag
+                // that STARTED in the dock always has room (its own slot is
+                // freed first), and a fold merges into an occupant rather
+                // than needing a slot of its own.
+                val dockFull = target is HomeLocation.Dock &&
+                    origin !is HomeLocation.Dock &&
+                    state.dock.size >= state.dockIconCount &&
+                    !fold
+
+                if (dockFull) {
+                    // Ping back to where it came from, then let go - the
+                    // ghost is still what's on screen (drag.item stays set
+                    // until end()), and it simply tracks drag.position, so
+                    // animating that position home animates the icon home.
+                    val home = when (origin) {
+                        is HomeLocation.Page -> Offset(
+                            (origin.slot % state.columns) * cellWidthPx + cellWidthPx / 2f,
+                            topPaddingPx + (origin.slot / state.columns) * cellHeightPx + cellHeightPx / 2f
+                        )
+                        // A folder's own overlay and the drawer both sit
+                        // above the pages rather than at a home slot of
+                        // their own - nothing meaningful to fly back to.
+                        else -> null
+                    }
+                    if (home == null) {
+                        drag.end()
+                    } else {
+                        scope.launch {
+                            Animatable(drag.position, Offset.VectorConverter)
+                                .animateTo(home, tween(REJECT_RETURN_MS)) { drag.position = value }
+                            drag.end()
+                        }
+                    }
+                    return
+                }
+
                 // A fold merges into an existing tile rather than landing as
                 // one of its own - there's no standalone arrival to seed.
                 if (!fold) {
@@ -370,14 +413,29 @@ fun LauncherScreen(
         // gesture-cancellation risk that ruled out reading drag fields this
         // way - nothing is being dragged when this changes.
         val folderOpen = state.openFolder != null
+        // Ramped rather than switched on outright - the glass frosting over
+        // as the folder grows, and clearing again as it shrinks away, is
+        // most of what makes the whole thing read as one movement instead
+        // of the home screen blinking between two states. Read inside the
+        // graphicsLayer lambda below, so each frame of it invalidates only
+        // the draw pass, never a recomposition.
+        val blurRadius by animateFloatAsState(
+            targetValue = if (folderOpen) BLUR_RADIUS_PX else 0f,
+            animationSpec = tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing),
+            label = "folderBlur"
+        )
         Column(
             Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    if (folderOpen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        renderEffect = RenderEffect
-                            .createBlurEffect(BLUR_RADIUS_PX, BLUR_RADIUS_PX, Shader.TileMode.CLAMP)
+                    renderEffect = if (blurRadius > 0.01f &&
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+                    ) {
+                        RenderEffect
+                            .createBlurEffect(blurRadius, blurRadius, Shader.TileMode.CLAMP)
                             .asComposeRenderEffect()
+                    } else {
+                        null
                     }
                 }
         ) {
@@ -1103,18 +1161,51 @@ private fun FolderOverlay(
     // the folder's own icons somewhere legible to sit.
     val scrimAlpha = if (dimmed) 0.1f else 0.38f
 
+    // 0 closed, 1 fully open. The folder grows into place from a little
+    // under its own size rather than being there the moment it's tapped,
+    // which is what made opening one feel abrupt - the panel and the scrim
+    // both ride this, and the blurred home screen behind ramps on the same
+    // timing (see blurRadius in LauncherScreen), so the frosting, the fade
+    // and the growth all land together as one motion.
+    val appear = remember { Animatable(0f) }
+    LaunchedEffect(folder.folderId) {
+        appear.animateTo(1f, tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing))
+    }
+    // Dismiss runs the same motion backwards before actually closing -
+    // the overlay is still mounted until onDismiss lands, so there's
+    // something left on screen to animate away.
+    val scope = rememberCoroutineScope()
+    fun dismissAnimated() {
+        scope.launch {
+            appear.animateTo(0f, tween(FOLDER_CLOSE_MS, easing = FastOutSlowInEasing))
+            onDismiss()
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
+            .graphicsLayer { alpha = appear.value }
             .background(Color.Black.copy(alpha = scrimAlpha))
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() }
-            ) { onDismiss() }
+            ) { dismissAnimated() }
     ) {
         Column(
             Modifier
                 .align(Alignment.TopCenter)
+                .graphicsLayer {
+                    // Grows from FOLDER_OPEN_FROM_SCALE up to its real size,
+                    // anchored at the top where the panel actually sits, so
+                    // it expands downward from under the title rather than
+                    // ballooning out of the screen's middle.
+                    val scale = FOLDER_OPEN_FROM_SCALE +
+                        (1f - FOLDER_OPEN_FROM_SCALE) * appear.value
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0.5f, 0f)
+                }
                 .padding(top = 48.dp + insets.calculateTopPadding())
                 .padding(horizontal = 24.dp)
         ) {
@@ -1274,6 +1365,25 @@ private const val EDGE_HOLD_MS = 1000L
 // genuinely deliberate hold - not just "however long it took to get here" -
 // arms a fold.
 private const val FOLDER_DWELL_MS = 2000L
+
+/**
+ * How long a drop the dock refused takes to fly back where it came from -
+ * a touch quicker than a settling reflow, so it reads as a rebound rather
+ * than another considered move.
+ */
+private const val REJECT_RETURN_MS = 200
+
+/** How long a folder takes to grow open, and to shrink back away. */
+private const val FOLDER_OPEN_MS = 220
+private const val FOLDER_CLOSE_MS = 160
+
+/**
+ * How large a folder starts before it expands - close enough to full size
+ * that it reads as the same panel growing, not a separate thing zooming in
+ * from nowhere.
+ */
+private const val FOLDER_OPEN_FROM_SCALE = 0.86f
+
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
 private val DOCK_AREA_HEIGHT = 96.dp
