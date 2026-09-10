@@ -1,6 +1,10 @@
 package com.example.opennanoor.launcher
 
 import android.content.ComponentName
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.os.Build
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
@@ -256,7 +260,26 @@ fun LauncherScreen(
                 }
         }
 
-        Column(Modifier.fillMaxSize()) {
+        // A real backdrop blur of the actual home screen - wallpaper and
+        // icons genuinely behind it, not a fake copy - while a folder is
+        // open, the way iOS's newer glass material reads: content seen
+        // through it, not hidden behind a flat tint. Opening a folder is a
+        // discrete tap, not a continuous drag signal, so reading
+        // state.openFolder here in composition carries none of the
+        // gesture-cancellation risk that ruled out reading drag fields this
+        // way - nothing is being dragged when this changes.
+        val folderOpen = state.openFolder != null
+        Column(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    if (folderOpen && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        renderEffect = RenderEffect
+                            .createBlurEffect(BLUR_RADIUS_PX, BLUR_RADIUS_PX, Shader.TileMode.CLAMP)
+                            .asComposeRenderEffect()
+                    }
+                }
+        ) {
             // userScrollEnabled and the swipe-up gesture below used to read
             // drag.active directly, toggling off the instant a tile drag
             // began. That is a composition-time parameter on the pager
@@ -718,7 +741,10 @@ private fun FolderOverlay(
     onDragEnded: () -> Unit
 ) {
     var editing by remember { mutableStateOf(false) }
-    val scrimAlpha = if (dimmed) 0.1f else 0.94f
+    // Light enough that the blurred home screen behind genuinely reads
+    // through it - a frosted pane, not a solid one - while still giving
+    // the folder's own icons somewhere legible to sit.
+    val scrimAlpha = if (dimmed) 0.1f else 0.38f
 
     Box(
         Modifier
@@ -845,6 +871,7 @@ private const val DRAWER_DRAG_THRESHOLD = 18f
 private const val EDGE_MARGIN_PX = 60f
 private const val EDGE_ADVANCE_COOLDOWN_MS = 450L
 private const val FOLDER_DWELL_MS = 1000L
+private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
 private val DOCK_AREA_HEIGHT = 96.dp
 private val GHOST_SIZE = 72.dp
