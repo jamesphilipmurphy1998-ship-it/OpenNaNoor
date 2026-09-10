@@ -22,6 +22,7 @@ import com.example.opennanoor.core.Feature
 import com.example.opennanoor.core.FeatureCatalog
 import com.example.opennanoor.core.Permissions
 import com.example.opennanoor.core.Settings
+import com.example.opennanoor.launcher.HomeLayout
 import com.example.opennanoor.launcher.IconPack
 import com.example.opennanoor.core.Requirement
 import com.example.opennanoor.service.AppMonitorService
@@ -86,6 +87,7 @@ class MainActivity : ComponentActivity() {
                     activePack = remember(epoch) { settings.iconPackPackage },
                     isDefaultHome = remember(epoch) { Permissions.isDefaultHome(context) },
                     dockIconCount = remember(epoch) { settings.dockIconCount },
+                    dockAppCount = remember(epoch) { HomeLayout.dockSize(context) },
                     onSelectPack = { pack ->
                         settings.iconPackPackage = pack
                         epoch++

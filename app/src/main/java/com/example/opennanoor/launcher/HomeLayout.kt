@@ -91,6 +91,18 @@ data class HomeLayout(
 
         fun newFolderId(): String = UUID.randomUUID().toString()
 
+        /**
+         * How many apps are currently in the saved dock, without needing
+         * the installed-app set [load] validates slots against - the
+         * settings screen (a separate Activity from the running home
+         * screen) just needs a count, to warn before a smaller dock count
+         * would leave more apps in it than fit.
+         */
+        fun dockSize(context: Context): Int {
+            val raw = prefs(context).getString(KEY, null) ?: return 0
+            return runCatching { JSONObject(raw).getJSONArray("dock").length() }.getOrDefault(0)
+        }
+
         private fun prefs(context: Context) =
             context.getSharedPreferences("opennanoor", Context.MODE_PRIVATE)
 

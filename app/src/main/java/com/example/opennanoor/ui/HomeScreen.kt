@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -25,6 +26,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +53,7 @@ fun HomeScreen(
     activePack: String?,
     isDefaultHome: Boolean,
     dockIconCount: Int,
+    dockAppCount: Int,
     onToggle: (Feature, Boolean) -> Unit,
     onGrant: (Requirement) -> Unit,
     onSelectPack: (String?) -> Unit,
@@ -101,6 +104,7 @@ fun HomeScreen(
             item {
                 DockIconCountCard(
                     count = dockIconCount,
+                    dockAppCount = dockAppCount,
                     onChange = onSetDockIconCount
                 )
             }
@@ -198,24 +202,30 @@ private fun IconPackCard(
 
 /**
  * How many icons the dock fits, 1-5. Independent of the page grid's own
- * icon size - the dock keeps its own outer size no matter what's picked
- * here; more icons just makes each one smaller within it.
+ * icon size - icon size and spacing both live inside the dock's own fixed
+ * outer footprint no matter what's picked here.
  *
- * Only 4 (today's size, unchanged) and 5 (fitting one more at the same
- * total footprint) are wired up to actually apply yet - 1 to 3 are visible
- * on the slider but don't change anything yet, so the full range the
- * eventual feature needs is already in place without waiting on the
- * smaller sizes to be built out first.
+ * Only 4 (today's size, unchanged) and 5 are wired up to actually apply
+ * yet - 1 to 3 are visible on the slider but don't change anything yet, so
+ * the full range the eventual feature needs is already in place without
+ * waiting on the smaller sizes to be built out first.
  */
 @Composable
-private fun DockIconCountCard(count: Int, onChange: (Int) -> Unit) {
+private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> Unit) {
+    // Dragging updates this immediately so the thumb tracks the finger, but
+    // an attempt to shrink below however many apps are actually sitting in
+    // the dock right now is only resolved once the finger lifts - asking
+    // first, rather than applying a size the dock can't actually hold.
+    var pendingRemoval by remember { mutableStateOf<Int?>(null) }
+    var sliderValue by remember(count) { mutableFloatStateOf(count.toFloat()) }
+
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Dock icon count", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
                 text = if (count in 4..5) {
-                    "$count icons in the dock. The dock itself stays the same size - more icons just makes each one smaller."
+                    "$count icons in the dock. The dock itself stays the same size - icons pack in tighter as more are added."
                 } else {
                     "1-3 aren't wired up yet - pick 4 or 5."
                 },
@@ -224,8 +234,17 @@ private fun DockIconCountCard(count: Int, onChange: (Int) -> Unit) {
             )
             Spacer(Modifier.height(4.dp))
             Slider(
-                value = count.toFloat(),
-                onValueChange = { onChange(it.toInt()) },
+                value = sliderValue,
+                onValueChange = { sliderValue = it },
+                onValueChangeFinished = {
+                    val target = sliderValue.toInt()
+                    if (target < dockAppCount) {
+                        pendingRemoval = target
+                        sliderValue = count.toFloat()
+                    } else {
+                        onChange(target)
+                    }
+                },
                 valueRange = 1f..5f,
                 steps = 3
             )
@@ -243,6 +262,24 @@ private fun DockIconCountCard(count: Int, onChange: (Int) -> Unit) {
                 }
             }
         }
+    }
+
+    val blocked = pendingRemoval
+    if (blocked != null) {
+        AlertDialog(
+            onDismissRequest = { pendingRemoval = null },
+            title = { Text("Dock is too full") },
+            text = {
+                Text(
+                    "Your dock has $dockAppCount apps in it, more than $blocked. " +
+                        "Remove ${dockAppCount - blocked} from the dock on the home " +
+                        "screen first, then come back and try again."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { pendingRemoval = null }) { Text("Got it") }
+            }
+        )
     }
 }
 

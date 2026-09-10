@@ -719,35 +719,47 @@ private fun Dock(
 
         // While a drag is hovering, the spacing itself previews squeezing
         // to make room: one more icon than are here now if this is an
-        // arrival from outside (the drawer, a page, another dock slot's
-        // worth of room isn't being asked for since nothing new is being
-        // added) - reordering within the dock doesn't change how many are
-        // here, just which order.
+        // arrival from outside (the drawer, a page) - reordering within the
+        // dock doesn't change how many are here, just which order. An icon
+        // that started in the dock and has been carried elsewhere (not
+        // hovering the dock any more) is conceptually already gone the
+        // instant it lifts off, not only once the drop actually lands -
+        // the remaining icons close its gap and recentre right away, the
+        // same way lifting an icon off a real dock behaves, rather than
+        // leaving a hole there until the drag finishes somewhere else
+        // entirely.
         fun previewCount(): Int {
-            if (!(drag.active && drag.overDock)) return items.size
-            return if (drag.origin is HomeLocation.Dock) items.size else items.size + 1
+            if (!drag.active) return items.size
+            val origin = drag.origin
+            return when {
+                origin is HomeLocation.Dock && !drag.overDock -> items.size - 1
+                origin is HomeLocation.Dock -> items.size
+                drag.overDock -> items.size + 1
+                else -> items.size
+            }
         }
 
         fun displacedSlot(slot: Int): Int {
-            val previewing = drag.active && drag.overDock
-            if (!previewing) return slot
+            if (!drag.active) return slot
+            val origin = drag.origin
+            if (origin is HomeLocation.Dock) {
+                val withoutDragged = if (slot > origin.slot) slot - 1 else slot
+                if (!drag.overDock) return withoutDragged
+                val (gapPx, pitchPx) = packing(previewCount())
+                val localX = drag.position.x - localOrigin.x - gapPx
+                val gap = dockDropTarget(localX, pitchPx, items.size - 1)
+                return if (withoutDragged >= gap) withoutDragged + 1 else withoutDragged
+            }
+            if (!drag.overDock) return slot
             val (gapPx, pitchPx) = packing(previewCount())
             val localX = drag.position.x - localOrigin.x - gapPx
-            val origin = drag.origin
-            return if (origin is HomeLocation.Dock) {
-                val withoutDragged = if (slot > origin.slot) slot - 1 else slot
-                val gap = dockDropTarget(localX, pitchPx, items.size - 1)
-                if (withoutDragged >= gap) withoutDragged + 1 else withoutDragged
-            } else {
-                val gap = dockDropTarget(localX, pitchPx, items.size)
-                if (slot >= gap) slot + 1 else slot
-            }
+            val gap = dockDropTarget(localX, pitchPx, items.size)
+            return if (slot >= gap) slot + 1 else slot
         }
 
         fun targetX(slot: Int): Float {
             val display = displacedSlot(slot)
-            val previewing = drag.active && drag.overDock
-            val (gapPx, pitchPx) = if (previewing) packing(previewCount()) else restGapPx to restPitchPx
+            val (gapPx, pitchPx) = if (drag.active) packing(previewCount()) else restGapPx to restPitchPx
             return gapPx + display * pitchPx
         }
 
