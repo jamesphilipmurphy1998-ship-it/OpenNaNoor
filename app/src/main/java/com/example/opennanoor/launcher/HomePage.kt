@@ -150,11 +150,20 @@ fun HomePage(
                     // between gestures, never mid-one, so it avoids both.
                     .pointerInput(pageIndex, slot, item.id) {
                         detectDragGesturesAfterLongPress(
-                            onDragStart = {
+                            // targetOffset() alone is this cell's top-left
+                            // corner - starting the ghost there rather than
+                            // where the finger actually pressed within the
+                            // cell was what made it pop up to one side
+                            // instead of centred under the touch. Adding the
+                            // local touch point (onDragStart's own offset)
+                            // gives the drag its true starting position in
+                            // the shared frame every other calculation here
+                            // already assumes it's in.
+                            onDragStart = { touch ->
                                 drag.start(
                                     item = item,
                                     origin = HomeLocation.Page(pageIndex, slot),
-                                    startPosition = targetOffset()
+                                    startPosition = targetOffset() + touch
                                 )
                             },
                             onDrag = { change, amount ->
@@ -291,7 +300,10 @@ internal fun pageDropTarget(
     columns: Int,
     items: List<HomeItem>
 ): PageDropTarget {
-    val centre = position + Offset(cellWidthPx / 2f, cellHeightPx / 2f)
+    // position is the actual touch point (DragCoordinator seeds it there and
+    // only ever moves it by the finger's own delta) - already a centre, not
+    // a cell corner needing a half-cell correction to become one.
+    val centre = position
     val column = (centre.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
     val row = ((centre.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
     val cellIndex = (row * columns + column).coerceIn(0, items.size)

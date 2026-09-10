@@ -60,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -137,7 +138,13 @@ fun LauncherScreen(
         }
     }
     val drag = remember { DragCoordinator() }
-    var lastEdgeAdvance by remember { mutableLongStateOf(0L) }
+    // Which edge the drag is currently resting in (-1 left, 0 neither, 1
+    // right) and when it started resting there - a page only flips once the
+    // finger has held inside the edge strip for EDGE_HOLD_MS, not the
+    // instant it crosses in, so passing through the edge on the way
+    // somewhere else doesn't trigger it.
+    var edgeHoldSide by remember { mutableIntStateOf(0) }
+    var edgeHoldSince by remember { mutableLongStateOf(0L) }
     var dockBounds by remember { mutableStateOf<Rect?>(null) }
     var removeZoneBounds by remember { mutableStateOf<Rect?>(null) }
     var outerOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -168,7 +175,12 @@ fun LauncherScreen(
 
         fun handleDragMoved(delta: Offset) {
             drag.moveBy(delta)
-            val center = drag.position + Offset(cellWidthPx / 2f, cellHeightPx / 2f)
+            // drag.position is seeded at the actual touch point (see
+            // HomePage and Dock) and moved by exactly the finger's own
+            // delta since, so it already is the point to hit-test against -
+            // no half-cell correction needed to approximate a centre
+            // anymore.
+            val center = drag.position
 
             drag.overDock = dockBounds?.contains(center) == true
             drag.overRemoveZone = editing && removeZoneBounds?.contains(center) == true
@@ -194,25 +206,35 @@ fun LauncherScreen(
             // so there is somewhere visible to drop onto.
             if (drag.fromDrawer && drawerOpen) onDrawerOpenChange(false)
 
+            // The dragged icon's own centre, not its top-left corner - using
+            // the corner meant a leftmost-column icon started the drag
+            // already sitting at x=0, inside the edge strip before the
+            // finger had moved at all, flipping the page the instant it was
+            // picked up.
+            val side = when {
+                drag.overDock || drag.overRemoveZone -> 0
+                center.x < EDGE_MARGIN_PX && pagerState.currentPage > 0 -> -1
+                center.x > outerWidthPx - EDGE_MARGIN_PX && pagerState.currentPage < pageCount - 1 -> 1
+                else -> 0
+            }
             val now = System.currentTimeMillis()
-            if (!drag.overDock && !drag.overRemoveZone &&
-                now - lastEdgeAdvance > EDGE_ADVANCE_COOLDOWN_MS
-            ) {
-                when {
-                    drag.position.x < EDGE_MARGIN_PX && pagerState.currentPage > 0 -> {
-                        lastEdgeAdvance = now
-                        scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                    }
-                    drag.position.x > outerWidthPx - EDGE_MARGIN_PX &&
-                        pagerState.currentPage < pageCount - 1 -> {
-                        lastEdgeAdvance = now
-                        scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                    }
+            if (side != edgeHoldSide) {
+                edgeHoldSide = side
+                edgeHoldSince = now
+            } else if (side != 0 && now - edgeHoldSince >= EDGE_HOLD_MS) {
+                // Reset rather than let the next check fire again next
+                // frame - holding through the flip requires dwelling the
+                // full second again before it repeats.
+                edgeHoldSince = now
+                when (side) {
+                    -1 -> scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                    1 -> scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                 }
             }
         }
 
         fun handleDragEnded() {
+            edgeHoldSide = 0
             val item = drag.item
             if (item != null) {
                 val target: HomeLocation = when {
@@ -355,6 +377,7 @@ fun LauncherScreen(
                 onPositioned = { bounds ->
                     dockBounds = bounds.translate(-outerOrigin)
                 },
+                outerOrigin = outerOrigin,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
@@ -579,7 +602,14 @@ private fun FolderPreview(folder: HomeItem.FolderItem, centreOffsetPx: Offset, c
 private fun DragGhost(drag: DragCoordinator) {
     Box(
         Modifier
-            .offset { IntOffset(drag.position.x.toInt(), drag.position.y.toInt()) }
+            // drag.position is now the actual touch point, not a tile's
+            // corner - centre the ghost on it rather than anchoring its
+            // own top-left there, or it would sit visibly down-and-right
+            // of the finger by half its own size.
+            .offset {
+                val half = GHOST_SIZE.roundToPx() / 2
+                IntOffset(drag.position.x.toInt() - half, drag.position.y.toInt() - half)
+            }
             .size(GHOST_SIZE)
             .graphicsLayer {
                 val shown = drag.item != null
@@ -627,6 +657,12 @@ private fun Dock(
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit,
     onPositioned: (Rect) -> Unit,
+    // To seed a drag at the right spot in the shared page/dock coordinate
+    // frame (see DragCoordinator), a dock icon needs its own absolute
+    // position translated into that frame the same way dockBounds already
+    // is - this is that same translation, handed down so each icon can do
+    // it for itself at the moment its drag starts.
+    outerOrigin: Offset,
     modifier: Modifier = Modifier
 ) {
     val iconSize = dockIconSize(slotCount)
@@ -645,19 +681,31 @@ private fun Dock(
             val isDragOrigin = drag.active && drag.origin == HomeLocation.Dock(index)
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 if (item != null) {
+                    // This icon's own on-screen position, captured on every
+                    // layout pass and translated into the same frame
+                    // dockBounds uses, so a drag starting here lands the
+                    // ghost at the actual touch point instead of way up at
+                    // the top of the screen - the local offset onDragStart
+                    // receives is only a few dp within this one icon, not a
+                    // position in the shared frame the ghost is drawn in.
+                    var iconOrigin by remember { mutableStateOf(Offset.Zero) }
                     // Kept composed while dragging - see HomePage - and merely
                     // made invisible, so the gesture handler survives.
                     Box(
                         // Same fix as HomePage's tiles - item.id keeps this
                         // bound to what's actually in the slot, not just its
                         // position, without restarting mid-gesture.
-                        Modifier.pointerInput(index, item.id) {
+                        Modifier
+                            .onGloballyPositioned {
+                                iconOrigin = it.positionInWindow() - outerOrigin
+                            }
+                            .pointerInput(index, item.id) {
                             detectDragGesturesAfterLongPress(
-                                onDragStart = { offset ->
+                                onDragStart = { touch ->
                                     drag.start(
                                         item = item,
                                         origin = HomeLocation.Dock(index),
-                                        startPosition = offset
+                                        startPosition = iconOrigin + touch
                                     )
                                 },
                                 onDrag = { change, amount ->
@@ -965,8 +1013,8 @@ private fun Modifier.pointerInputIf(
 ): Modifier = if (condition) this.pointerInput(condition, block) else this
 
 private const val DRAWER_DRAG_THRESHOLD = 18f
-private const val EDGE_MARGIN_PX = 60f
-private const val EDGE_ADVANCE_COOLDOWN_MS = 450L
+private const val EDGE_MARGIN_PX = 28f
+private const val EDGE_HOLD_MS = 1000L
 private const val FOLDER_DWELL_MS = 1000L
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L

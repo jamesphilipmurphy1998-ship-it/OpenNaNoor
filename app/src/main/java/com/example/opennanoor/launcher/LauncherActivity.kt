@@ -12,7 +12,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.opennanoor.MainActivity
 import com.example.opennanoor.ui.theme.OpenNaNoorTheme
@@ -36,6 +41,13 @@ class LauncherActivity : ComponentActivity() {
                 val state by vm.state.collectAsState()
                 var drawerOpen by remember { mutableStateOf(false) }
                 var editing by remember { mutableStateOf(false) }
+
+                // Settings live on a different screen (MainActivity), so a
+                // change made there - dock icon count, columns, icon pack,
+                // iOS style - only reaches this already-running home screen
+                // by re-checking on resume, the same way MainActivity
+                // re-reads its own permission state on resume.
+                OnResume { vm.refreshSettingsIfChanged() }
 
                 // Pressing home while the drawer is open closes it, as it would
                 // on any stock launcher.
@@ -88,5 +100,18 @@ class LauncherActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         homePressed++
+    }
+}
+
+/** Runs [block] each time the host lifecycle reaches RESUMED. */
+@Composable
+private fun OnResume(block: () -> Unit) {
+    val owner = LocalLifecycleOwner.current
+    DisposableEffect(owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) block()
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
     }
 }

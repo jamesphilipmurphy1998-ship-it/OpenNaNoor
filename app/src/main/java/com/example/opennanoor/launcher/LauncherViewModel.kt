@@ -155,6 +155,30 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
+     * Settings are changed from MainActivity, a separate screen from the
+     * running home screen - this instance's [settings] reads happened once,
+     * at [init], and never again on their own. Called when the home screen
+     * resumes so a change made while it was in the background (dock icon
+     * count, columns, icon pack, iOS style) actually takes effect instead of
+     * silently being ignored until the process is killed and restarted.
+     * Icon pack and iOS style need every icon regenerated, so those go
+     * through the full [refresh]; the rest are plain numbers the UI already
+     * reads straight off [LauncherUiState].
+     */
+    fun refreshSettingsIfChanged() {
+        val packChanged = settings.iconPackPackage != _state.value.activePack
+        val iosChanged = settings.iosIconStyle != _state.value.iosStyle
+        if (packChanged || iosChanged) {
+            refresh()
+        } else {
+            _state.value = _state.value.copy(
+                columns = settings.columns,
+                dockIconCount = settings.dockIconCount
+            )
+        }
+    }
+
+    /**
      * Moves whatever sits at [from] to [to]. Dropping an app onto another app
      * bundles them into a new folder; dropping one onto a folder joins it;
      * dropping onto empty space inserts there, pushing later items along. A
@@ -270,6 +294,21 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     destination = HomeLocation.Page(destination.page + 1, 0)
                 }
             }
+        }
+
+        // Unlike a full page, a full dock has nowhere to spill over to - its
+        // own outer size is fixed by dockCapacity. Without this guard, a
+        // non-merging drop onto a full dock still inserted, silently pushing
+        // the last icon past dockCapacity where Dock's repeat(slotCount)
+        // never draws it again - an icon would vanish and the drop would
+        // look like it failed.
+        if (destination is HomeLocation.Dock && dockWorking.size >= dockCapacity) {
+            val occupant = dockWorking.getOrNull(destination.slot.coerceIn(0, dockWorking.lastIndex))
+            val willMerge = fold && (
+                occupant is HomeItem.FolderItem && item is HomeItem.AppItem ||
+                    occupant is HomeItem.AppItem && item is HomeItem.AppItem && occupant != item
+                )
+            if (!willMerge) return
         }
 
         val targetList = listFor(destination) ?: pagesWorking.lastOrNull() ?: run {
