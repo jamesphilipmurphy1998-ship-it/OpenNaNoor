@@ -376,4 +376,4 @@ fun rememberWobble(enabled: Boolean, seed: Int): Float {
 
 private const val WOBBLE_DEGREES = 2.4f
 private const val WOBBLE_PERIOD_MS = 220
-private const val REFLOW_ANIMATION_MS = 250
+internal const val REFLOW_ANIMATION_MS = 250

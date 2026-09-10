@@ -6,6 +6,9 @@ import android.graphics.Shader
 import android.os.Build
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.fadeIn
@@ -242,8 +245,16 @@ fun LauncherScreen(
                         val bounds = dockBounds
                         val dockSlot = if (bounds != null && bounds.width > 0f) {
                             val cellW = bounds.width / state.dockIconCount
-                            ((drag.position.x - bounds.left) / cellW).toInt()
-                                .coerceIn(0, state.dockIconCount - 1)
+                            // Same gap math the live push-preview in Dock
+                            // used while this was still hovering, against
+                            // however many icons the dock will actually
+                            // hold once this drop's own source slot (if it
+                            // came from the dock itself) is removed - the
+                            // same count insertItem's own clamp resolves
+                            // against.
+                            val itemCount = state.dock.size -
+                                if (drag.origin is HomeLocation.Dock) 1 else 0
+                            dockDropTarget(drag.position.x - bounds.left, cellW, itemCount)
                         } else 0
                         HomeLocation.Dock(dockSlot)
                     }
@@ -667,73 +678,130 @@ private fun Dock(
     modifier: Modifier = Modifier
 ) {
     val iconSize = dockIconSize(slotCount)
+    val density = LocalDensity.current
 
-    Row(
-        modifier = modifier
+    BoxWithConstraints(
+        modifier
             .height(DOCK_AREA_HEIGHT - 8.dp)
             .clip(RoundedCornerShape(28.dp))
             .background(Color.White.copy(alpha = 0.12f))
             .padding(vertical = 10.dp, horizontal = 8.dp)
-            .onGloballyPositioned { onPositioned(it.boundsInWindow()) },
-        horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        repeat(slotCount) { index ->
-            val item = items.getOrNull(index)
-            val isDragOrigin = drag.active && drag.origin == HomeLocation.Dock(index)
-            Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                if (item != null) {
-                    // This icon's own on-screen position, captured on every
-                    // layout pass and translated into the same frame
-                    // dockBounds uses, so a drag starting here lands the
-                    // ghost at the actual touch point instead of way up at
-                    // the top of the screen - the local offset onDragStart
-                    // receives is only a few dp within this one icon, not a
-                    // position in the shared frame the ghost is drawn in.
-                    var iconOrigin by remember { mutableStateOf(Offset.Zero) }
-                    // Kept composed while dragging - see HomePage - and merely
-                    // made invisible, so the gesture handler survives.
-                    Box(
-                        // Same fix as HomePage's tiles - item.id keeps this
-                        // bound to what's actually in the slot, not just its
-                        // position, without restarting mid-gesture.
-                        Modifier
-                            .onGloballyPositioned {
-                                iconOrigin = it.positionInWindow() - outerOrigin
-                            }
-                            .pointerInput(index, item.id) {
-                            detectDragGesturesAfterLongPress(
-                                onDragStart = { touch ->
-                                    drag.start(
-                                        item = item,
-                                        origin = HomeLocation.Dock(index),
-                                        startPosition = iconOrigin + touch
-                                    )
-                                },
-                                onDrag = { change, amount ->
-                                    change.consume()
-                                    onDragMoved(amount)
-                                },
-                                onDragEnd = onDragEnded,
-                                onDragCancel = onDragEnded
-                            )
-                        }
-                    ) {
-                        HomeItemTile(
-                            item = item,
-                            onClick = {
-                                if (item is HomeItem.FolderItem || !editing) onTap(item)
-                            },
-                            showLabel = false,
-                            wobble = editing,
-                            iconSize = iconSize,
-                            modifier = Modifier.alpha(if (isDragOrigin) 0f else 1f)
-                        )
-                    }
+        // This Box's own on-screen position, translated into the same frame
+        // dockBounds uses - needed locally too so the live push-preview
+        // below can turn the shared-frame drag.position into an x offset
+        // from the dock's own left edge, the same conversion dockBounds
+        // itself goes through one layer up.
+        var localOrigin by remember { mutableStateOf(Offset.Zero) }
+        val cellWidthPx = with(density) { maxWidth.toPx() } / slotCount
+
+        fun displacedSlot(slot: Int): Int {
+            val previewing = drag.active && drag.overDock
+            if (!previewing) return slot
+            val localX = drag.position.x - localOrigin.x
+            val origin = drag.origin
+            return if (origin is HomeLocation.Dock) {
+                val withoutDragged = if (slot > origin.slot) slot - 1 else slot
+                val gap = dockDropTarget(localX, cellWidthPx, items.size - 1)
+                if (withoutDragged >= gap) withoutDragged + 1 else withoutDragged
+            } else {
+                val gap = dockDropTarget(localX, cellWidthPx, items.size)
+                if (slot >= gap) slot + 1 else slot
+            }
+        }
+
+        Box(
+            Modifier
+                .fillMaxSize()
+                .onGloballyPositioned {
+                    localOrigin = it.positionInWindow() - outerOrigin
+                    onPositioned(it.boundsInWindow())
                 }
+        )
+
+        items.forEachIndexed { slot, item ->
+            val thisLocation = HomeLocation.Dock(slot)
+            val isDragOrigin = drag.active && drag.origin == thisLocation
+
+            // Slides to its displaced position instead of jumping there,
+            // the same push animation HomePage uses while reordering a
+            // page - deferred to layout/draw, never read during
+            // composition, for the same drag-cancelling reason explained
+            // there.
+            val basePosition = remember(slot, cellWidthPx) { Offset(slot * cellWidthPx, 0f) }
+            val animatedOffset = remember(slot) { Animatable(basePosition, Offset.VectorConverter) }
+            LaunchedEffect(slot) {
+                androidx.compose.runtime.snapshotFlow { displacedSlot(slot) }
+                    .collectLatest { display ->
+                        animatedOffset.animateTo(Offset(display * cellWidthPx, 0f), tween(REFLOW_ANIMATION_MS))
+                    }
+            }
+
+            // This icon's own on-screen position, captured on every layout
+            // pass and translated into the same frame dockBounds uses, so a
+            // drag starting here lands the ghost at the actual touch point
+            // instead of way up at the top of the screen - the local offset
+            // onDragStart receives is only a few dp within this one icon,
+            // not a position in the shared frame the ghost is drawn in.
+            var iconOrigin by remember { mutableStateOf(Offset.Zero) }
+
+            // Kept composed while dragging - see HomePage - and merely
+            // made invisible, so the gesture handler survives.
+            Box(
+                Modifier
+                    .size(with(density) { cellWidthPx.toDp() }, maxHeight)
+                    .offset {
+                        val p = animatedOffset.value
+                        IntOffset(p.x.toInt(), p.y.toInt())
+                    }
+                    .onGloballyPositioned {
+                        iconOrigin = it.positionInWindow() - outerOrigin
+                    }
+                    // Same fix as HomePage's tiles - item.id keeps this
+                    // bound to what's actually in the slot, not just its
+                    // position, without restarting mid-gesture.
+                    .pointerInput(slot, item.id) {
+                        detectDragGesturesAfterLongPress(
+                            onDragStart = { touch ->
+                                drag.start(
+                                    item = item,
+                                    origin = thisLocation,
+                                    startPosition = iconOrigin + touch
+                                )
+                            },
+                            onDrag = { change, amount ->
+                                change.consume()
+                                onDragMoved(amount)
+                            },
+                            onDragEnd = onDragEnded,
+                            onDragCancel = onDragEnded
+                        )
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                HomeItemTile(
+                    item = item,
+                    onClick = {
+                        if (item is HomeItem.FolderItem || !editing) onTap(item)
+                    },
+                    showLabel = false,
+                    wobble = editing,
+                    iconSize = iconSize,
+                    modifier = Modifier.alpha(if (isDragOrigin) 0f else 1f)
+                )
             }
         }
     }
 }
+
+/**
+ * Where a drag over the dock would land - a plain insertion index among
+ * [itemCount] existing icons. Unlike a page's grid the dock never merges
+ * into a folder, so there is no hold-to-fold zone to carve out of this the
+ * way [pageDropTarget] has to.
+ */
+internal fun dockDropTarget(localX: Float, cellWidthPx: Float, itemCount: Int): Int =
+    if (cellWidthPx <= 0f) 0 else (localX / cellWidthPx).toInt().coerceIn(0, itemCount)
 
 @Composable
 private fun PageDots(count: Int, current: Int, modifier: Modifier = Modifier) {
