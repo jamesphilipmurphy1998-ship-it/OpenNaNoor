@@ -40,15 +40,20 @@ internal const val ICON_PX = 192
 internal val DEFAULT_ICON_SIZE = 56.dp
 
 /**
- * Icon size for a dock holding [count] icons - the same DEFAULT_ICON_SIZE
- * regardless of count. This used to shrink icons as count grew so the
- * dock's total content width stayed constant, but 5 icons at the 4-icon
- * size (packed tighter, not smaller) is the actual look wanted, discovered
- * by holding 5 icons in the dock while set to 4 - so this is a deliberate
- * request, not the original design. The 4-icon case is untouched either
- * way: it was already DEFAULT_ICON_SIZE unscaled.
+ * Icon size for a dock holding [count] icons. 4 and 5 both use the same
+ * DEFAULT_ICON_SIZE unscaled - 5 icons at the 4-icon size (packed tighter,
+ * not smaller) is the actual look wanted, discovered by holding 5 icons in
+ * the dock while set to 4, so this is a deliberate request rather than the
+ * original shrink-to-fit design. 6 is being tried the other way, smaller
+ * rather than tighter-packed - scaled down from the 5-icon baseline the
+ * same proportional way the original design scaled every count. Only a
+ * size preview for now: the dock still only actually holds up to 5 apps
+ * (see LauncherViewModel's dockCapacity), a real 6th slot isn't wired up
+ * yet.
  */
-internal fun dockIconSize(count: Int): Dp = DEFAULT_ICON_SIZE
+internal fun dockIconSize(count: Int): Dp =
+    if (count <= DOCK_BASELINE_COUNT + 1) DEFAULT_ICON_SIZE
+    else DEFAULT_ICON_SIZE * (DOCK_BASELINE_COUNT + 1) / count
 
 private const val DOCK_BASELINE_COUNT = 4
 

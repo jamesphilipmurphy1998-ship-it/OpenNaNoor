@@ -201,14 +201,14 @@ private fun IconPackCard(
 }
 
 /**
- * How many icons the dock fits, 1-5. Independent of the page grid's own
+ * How many icons the dock fits, 1-6. Independent of the page grid's own
  * icon size - icon size and spacing both live inside the dock's own fixed
  * outer footprint no matter what's picked here.
  *
- * Only 4 (today's size, unchanged) and 5 are wired up to actually apply
- * yet - 1 to 3 are visible on the slider but don't change anything yet, so
- * the full range the eventual feature needs is already in place without
- * waiting on the smaller sizes to be built out first.
+ * 4 and 5 are fully wired up; 1-3 are visible on the slider but don't
+ * change anything yet. 6 is a size preview only for now - it shrinks the
+ * icons to test the look, but the dock still won't actually hold more than
+ * 5 apps until a real 6th slot is built (see LauncherViewModel).
  */
 @Composable
 private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> Unit) {
@@ -224,10 +224,10 @@ private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> 
             Text("Dock icon count", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(4.dp))
             Text(
-                text = if (count in 4..5) {
-                    "$count icons in the dock. The dock itself stays the same size - icons pack in tighter as more are added."
-                } else {
-                    "1-3 aren't wired up yet - pick 4 or 5."
+                text = when (count) {
+                    in 4..5 -> "$count icons in the dock. The dock itself stays the same size - icons pack in tighter as more are added."
+                    6 -> "Size preview only - icons shrink to show how 6 would look, but the dock still holds at most 5 apps for now."
+                    else -> "1-3 aren't wired up yet - pick 4 or 5."
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -245,11 +245,11 @@ private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> 
                         onChange(target)
                     }
                 },
-                valueRange = 1f..5f,
-                steps = 3
+                valueRange = 1f..6f,
+                steps = 4
             )
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                (1..5).forEach { n ->
+                (1..6).forEach { n ->
                     Text(
                         text = "$n",
                         style = MaterialTheme.typography.labelSmall,

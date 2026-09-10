@@ -51,6 +51,14 @@ data class LauncherUiState(
         }
 }
 
+/**
+ * The dock icon count setting goes up to 6 already, so its size can be
+ * previewed before the slot itself exists - but a real 6th slot (where a
+ * 6th app could actually land) isn't built yet, so insertions still clamp
+ * to this regardless of what the setting says.
+ */
+private const val MAX_WIRED_DOCK_CAPACITY = 5
+
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settings = Settings(app)
@@ -206,7 +214,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     ?: return
         }
 
-        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
+        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount.coerceAtMost(MAX_WIRED_DOCK_CAPACITY), fold)
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
             page.isNotEmpty() || pagesWorking.size == 1
@@ -359,7 +367,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
-        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
+        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount.coerceAtMost(MAX_WIRED_DOCK_CAPACITY), fold)
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
         _state.value = current.copy(pages = finalPages, dock = dockWorking)
