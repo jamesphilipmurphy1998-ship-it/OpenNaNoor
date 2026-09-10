@@ -181,11 +181,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Moves whatever sits at [from] to [to]. Dropping an app onto another app
      * bundles them into a new folder; dropping one onto a folder joins it;
-     * dropping onto empty space inserts there, pushing later items along. A
-     * page that fills past its row count spills the drop onto a fresh page
-     * rather than silently overflowing; a full dock (dockIconCount icons
-     * already in it) rejects a non-merging drop instead, since it has
-     * nowhere to spill into.
+     * dropping onto empty space inserts there, pushing later items along -
+     * one falling off the end of a full page spills onto the front of the
+     * next one instead of that page silently holding one over its own row
+     * count. A full dock (dockIconCount icons already in it) rejects a
+     * non-merging drop instead, since it has nowhere to spill into.
      */
     fun moveItem(from: HomeLocation, to: HomeLocation, fold: Boolean = false) {
         val current = _state.value
@@ -250,10 +250,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * Inserts [item] at [to], mutating [pagesWorking]/[dockWorking] in place.
      * Dropping onto another app bundles both into a new folder; dropping onto
-     * a folder joins it; dropping past a full page's row count spills onto a
-     * fresh page rather than overflowing it, and a full dock (dockCapacity
-     * icons already in it) rejects a non-merging drop, since it has nowhere
-     * to spill into - its own outer size never changes.
+     * a folder joins it. Dropping into a full page still lands exactly where
+     * aimed, pushing every icon after it along - the one that falls off the
+     * end spills onto the front of the next page (see [spillOverflow]) rather
+     * than the page holding one more than its own row count. A full dock
+     * (dockCapacity icons already in it) rejects a non-merging drop instead,
+     * since it has nowhere to spill into - its own outer size never changes.
      */
     private fun insertItem(
         item: HomeItem,
@@ -275,28 +277,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             is HomeLocation.Folder -> null
         }
 
-        // A full page only actually grows if this drop is going to insert a
-        // new slot into it - a fold merging into the occupant at the target
-        // slot doesn't add one. Checking only "is the drop at the tail" (the
-        // original guard) missed every interior drop into a full page: it
-        // grew the page past capacity instead of spilling, since insertion
-        // anywhere in a list shifts everything after it the same way an
-        // append does.
-        var destination = to
-        if (destination is HomeLocation.Page) {
-            val destPage = pagesWorking.getOrNull(destination.page)
-            if (destPage != null && destPage.size >= capacity) {
-                val occupant = destPage.getOrNull(destination.slot.coerceIn(0, destPage.lastIndex))
-                val willMerge = fold && (
-                    occupant is HomeItem.FolderItem && item is HomeItem.AppItem ||
-                        occupant is HomeItem.AppItem && item is HomeItem.AppItem && occupant != item
-                    )
-                if (!willMerge) {
-                    pagesWorking.add(destination.page + 1, mutableListOf())
-                    destination = HomeLocation.Page(destination.page + 1, 0)
-                }
-            }
-        }
+        val destination = to
 
         // Unlike a full page, a full dock has nowhere to spill over to - its
         // own outer size is fixed by dockCapacity. Without this guard, a
@@ -347,6 +328,41 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 )
 
             else -> targetList.add(insertIndex, item)
+        }
+
+        // The insert above lands exactly where the drop was aimed, pushing
+        // everything after it along the way it always does - even into a
+        // full page, which now grows one past capacity rather than being
+        // redirected to a fresh page regardless of where within it was
+        // dropped. That one extra icon spills off the end onto the front of
+        // the next page instead, cascading again if that page was also
+        // full, rather than sitting in the current one past its own row
+        // count.
+        if (destination is HomeLocation.Page) {
+            spillOverflow(destination.page, pagesWorking, capacity)
+        }
+    }
+
+    /**
+     * Bumps the last icon off [pageIndex] onto the front of the next page
+     * if it's grown past [capacity], creating that next page if there isn't
+     * one yet - and keeps cascading, since bumping one into an already-full
+     * next page just moves the problem one page further along.
+     */
+    private fun spillOverflow(
+        pageIndex: Int,
+        pagesWorking: MutableList<MutableList<HomeItem>>,
+        capacity: Int
+    ) {
+        var index = pageIndex
+        while (true) {
+            val page = pagesWorking.getOrNull(index) ?: return
+            if (page.size <= capacity) return
+            val overflow = page.removeAt(page.lastIndex)
+            val nextIndex = index + 1
+            if (nextIndex >= pagesWorking.size) pagesWorking.add(mutableListOf())
+            pagesWorking[nextIndex].add(0, overflow)
+            index = nextIndex
         }
     }
 
