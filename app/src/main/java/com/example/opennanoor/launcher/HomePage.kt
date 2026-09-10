@@ -265,26 +265,18 @@ internal fun pageDropTarget(
     val cellIndex = (row * columns + column).coerceIn(0, items.size)
     val occupant = items.getOrNull(cellIndex)
 
-    return when (occupant) {
-        null -> PageDropTarget(gap = cellIndex, holdTarget = null)
+    if (occupant == null) return PageDropTarget(gap = cellIndex, holdTarget = null)
 
-        // Two apps only ever mean one thing when they touch: dwell to fold,
-        // release quickly to push. No edge zones needed - there is no
-        // "insert without folding" case a plain push doesn't already cover.
-        is HomeItem.AppItem -> PageDropTarget(gap = cellIndex, holdTarget = cellIndex)
-
-        // A folder is also a place two different intents land on the same
-        // cell: dwelling in its centre offers dropping in, but either edge
-        // needs to mean "insert beside it" instead, or there would be no
-        // way to place anything next to a folder at all.
-        is HomeItem.FolderItem -> {
-            val withinCell = ((centre.x - column * cellWidthPx) / cellWidthPx).coerceIn(0f, 1f)
-            when {
-                withinCell < FOLDER_ZONE_START -> PageDropTarget(gap = cellIndex, holdTarget = null)
-                withinCell > FOLDER_ZONE_END -> PageDropTarget(gap = cellIndex + 1, holdTarget = null)
-                else -> PageDropTarget(gap = cellIndex, holdTarget = cellIndex)
-            }
-        }
+    // Any occupied cell - app or folder - is a place two different intents
+    // land on the same spot: dwelling in its centre offers merging into a
+    // folder (making one, if it's a plain app), but either edge needs to
+    // mean "insert beside it" instead, or there would be no way to place
+    // anything next to an existing icon without folding into it.
+    val withinCell = ((centre.x - column * cellWidthPx) / cellWidthPx).coerceIn(0f, 1f)
+    return when {
+        withinCell < FOLDER_ZONE_START -> PageDropTarget(gap = cellIndex, holdTarget = null)
+        withinCell > FOLDER_ZONE_END -> PageDropTarget(gap = cellIndex + 1, holdTarget = null)
+        else -> PageDropTarget(gap = cellIndex, holdTarget = cellIndex)
     }
 }
 
