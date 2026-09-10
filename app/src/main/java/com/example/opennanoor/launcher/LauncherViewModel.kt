@@ -30,6 +30,7 @@ data class LauncherUiState(
     val activePack: String? = null,
     val iosStyle: Boolean = false,
     val columns: Int = 4,
+    val dockIconCount: Int = 4,
     val openFolderId: String? = null,
     val loading: Boolean = true
 ) {
@@ -67,6 +68,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             val packChoice = settings.iconPackPackage
             val ios = settings.iosIconStyle
             val columns = settings.columns
+            val dockIconCount = settings.dockIconCount
 
             val result = withContext(Dispatchers.IO) {
                 val apps = AppRepository.installedApps(context)
@@ -135,6 +137,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 activePack = packChoice.takeIf { result.packActive },
                 iosStyle = ios,
                 columns = columns,
+                dockIconCount = dockIconCount,
                 openFolderId = _state.value.openFolderId,
                 loading = false
             )
@@ -179,7 +182,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     ?: return
         }
 
-        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, fold)
+        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
             page.isNotEmpty() || pagesWorking.size == 1
@@ -232,6 +235,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         pagesWorking: MutableList<MutableList<HomeItem>>,
         dockWorking: MutableList<HomeItem>,
         columns: Int,
+        dockCapacity: Int,
         fold: Boolean
     ) {
         val capacity = columns * HomeLayout.ROWS_PER_PAGE
@@ -277,7 +281,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             is HomeLocation.Page -> target.slot.coerceIn(0, targetList.size)
             is HomeLocation.Dock -> target.slot.coerceIn(
                 0,
-                minOf(targetList.size, HomeLayout.DOCK_SIZE - 1)
+                minOf(targetList.size, dockCapacity - 1)
             )
             is HomeLocation.Folder -> targetList.size
         }
@@ -316,7 +320,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
-        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, fold)
+        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
         _state.value = current.copy(pages = finalPages, dock = dockWorking)

@@ -219,9 +219,9 @@ fun LauncherScreen(
                     drag.overDock -> {
                         val bounds = dockBounds
                         val dockSlot = if (bounds != null && bounds.width > 0f) {
-                            val cellW = bounds.width / HomeLayout.DOCK_SIZE
+                            val cellW = bounds.width / state.dockIconCount
                             ((drag.position.x - bounds.left) / cellW).toInt()
-                                .coerceIn(0, HomeLayout.DOCK_SIZE - 1)
+                                .coerceIn(0, state.dockIconCount - 1)
                         } else 0
                         HomeLocation.Dock(dockSlot)
                     }
@@ -345,6 +345,7 @@ fun LauncherScreen(
 
             Dock(
                 items = state.dock,
+                slotCount = state.dockIconCount,
                 drag = drag,
                 editing = editing,
                 onTap = ::handleTap,
@@ -612,6 +613,13 @@ private fun RemoveZone(highlighted: Boolean, onPositioned: (Rect) -> Unit) {
 @Composable
 private fun Dock(
     items: List<HomeItem>,
+    // Always renders exactly this many slots, whether or not the dock is
+    // actually full - the icon size (dockIconSize) is derived from this
+    // count, not from how many apps happen to be sitting there, so a
+    // half-empty 5-icon dock still shows 5-icon-sized icons, not 4-sized
+    // ones with gaps. The dock's own outer bounds (height, padding, corner
+    // radius) never change with this - only what's drawn inside does.
+    slotCount: Int,
     drag: DragCoordinator,
     editing: Boolean,
     onTap: (HomeItem) -> Unit,
@@ -621,6 +629,8 @@ private fun Dock(
     onPositioned: (Rect) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val iconSize = dockIconSize(slotCount)
+
     Row(
         modifier = modifier
             .height(DOCK_AREA_HEIGHT - 8.dp)
@@ -630,10 +640,11 @@ private fun Dock(
             .onGloballyPositioned { onPositioned(it.boundsInWindow()) },
         horizontalArrangement = Arrangement.SpaceEvenly
     ) {
-        items.forEachIndexed { index, item ->
+        repeat(slotCount) { index ->
+            val item = items.getOrNull(index)
             val isDragOrigin = drag.active && drag.origin == HomeLocation.Dock(index)
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                run {
+                if (item != null) {
                     // Kept composed while dragging - see HomePage - and merely
                     // made invisible, so the gesture handler survives.
                     Box(
@@ -665,6 +676,7 @@ private fun Dock(
                             },
                             showLabel = false,
                             wobble = editing,
+                            iconSize = iconSize,
                             modifier = Modifier.alpha(if (isDragOrigin) 0f else 1f)
                         )
                     }

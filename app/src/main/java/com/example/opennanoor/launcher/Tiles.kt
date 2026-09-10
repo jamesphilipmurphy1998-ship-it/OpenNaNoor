@@ -28,12 +28,28 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 
 /** Pixel size icons are rasterised at - generous so they stay sharp. */
 internal const val ICON_PX = 192
+
+/** The one and only icon size until the dock's own count setting scales it down. */
+internal val DEFAULT_ICON_SIZE = 56.dp
+
+/**
+ * Icon size for a dock holding [count] icons. 4 is the baseline this app
+ * shipped with - DEFAULT_ICON_SIZE, unscaled - and every other count scales
+ * from it so the dock's total content width stays roughly constant: more
+ * icons means smaller ones, not a wider dock. The dock's own outer bounds
+ * never change - only what's drawn inside them does.
+ */
+internal fun dockIconSize(count: Int): Dp =
+    DEFAULT_ICON_SIZE * DOCK_BASELINE_COUNT / count.coerceAtLeast(1)
+
+private const val DOCK_BASELINE_COUNT = 4
 
 /**
  * One tile: an app's icon, or a folder's small 2x2 preview of its contents.
@@ -49,6 +65,10 @@ internal fun HomeItemTile(
     wobble: Boolean = false,
     wobbleSeed: Int = 0,
     onLongClick: (() -> Unit)? = null,
+    // Only the dock ever passes anything but the default - pages, the
+    // drawer, a folder's own overlay, and the drag ghost all stay at the
+    // one fixed size regardless of what the dock's own count is set to.
+    iconSize: Dp = DEFAULT_ICON_SIZE,
     modifier: Modifier = Modifier
 ) {
     val angle = rememberWobble(enabled = wobble, seed = wobbleSeed)
@@ -67,8 +87,8 @@ internal fun HomeItemTile(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         when (item) {
-            is HomeItem.AppItem -> AppIcon(item)
-            is HomeItem.FolderItem -> FolderIcon(item)
+            is HomeItem.AppItem -> AppIcon(item, iconSize)
+            is HomeItem.FolderItem -> FolderIcon(item, iconSize)
         }
         if (showLabel) {
             Text(
@@ -86,7 +106,7 @@ internal fun HomeItemTile(
 }
 
 @Composable
-private fun AppIcon(item: HomeItem.AppItem) {
+private fun AppIcon(item: HomeItem.AppItem, size: Dp) {
     val bitmap = remember(item.entry.icon) {
         item.entry.icon.toBitmap(ICON_PX, ICON_PX).asImageBitmap()
     }
@@ -94,16 +114,16 @@ private fun AppIcon(item: HomeItem.AppItem) {
         bitmap = bitmap,
         contentDescription = item.entry.app.label,
         contentScale = ContentScale.Fit,
-        modifier = Modifier.size(56.dp)
+        modifier = Modifier.size(size)
     )
 }
 
 /** A rounded tile holding up to four of the folder's icons in a 2x2 grid. */
 @Composable
-private fun FolderIcon(item: HomeItem.FolderItem) {
+private fun FolderIcon(item: HomeItem.FolderItem, size: Dp) {
     Box(
         modifier = Modifier
-            .size(56.dp)
+            .size(size)
             .clip(RoundedCornerShape(14.dp))
             .background(Color.White.copy(alpha = 0.18f))
             .padding(6.dp)

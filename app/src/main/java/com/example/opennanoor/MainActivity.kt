@@ -85,11 +85,16 @@ class MainActivity : ComponentActivity() {
                     iconPacks = iconPacks,
                     activePack = remember(epoch) { settings.iconPackPackage },
                     isDefaultHome = remember(epoch) { Permissions.isDefaultHome(context) },
+                    dockIconCount = remember(epoch) { settings.dockIconCount },
                     onSelectPack = { pack ->
                         settings.iconPackPackage = pack
                         epoch++
                     },
                     onOpenHomeSettings = { startActivity(Permissions.homeAppSettingsIntent()) },
+                    onSetDockIconCount = { count ->
+                        settings.dockIconCount = count
+                        epoch++
+                    },
                     onToggle = { feature, on ->
                         toggle(feature, on)
                         epoch++
