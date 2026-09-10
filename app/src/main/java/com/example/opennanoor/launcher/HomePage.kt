@@ -99,6 +99,23 @@ fun HomePage(
                     cellHeightPx = cellHeightPx,
                     topPaddingPx = topPaddingPx
                 )
+                // Past the last real cell (a full page previewing a drop
+                // that will push its last icon off entirely) wrapping to
+                // row/column math would drop it to column 0 of a new row
+                // below - visually pushing down, while the drop that
+                // actually lands it plays a slide-right departure (see
+                // SpillEvent) once committed. Sliding it one cell past the
+                // last column of its own row instead keeps the live preview
+                // and the actual departure animation showing the same
+                // direction throughout the whole gesture.
+                val capacity = columns * rows
+                if (display >= capacity) {
+                    val lastRow = (capacity - 1) / columns
+                    return Offset(
+                        columns * cellWidthPx,
+                        topPaddingPx + lastRow * cellHeightPx
+                    )
+                }
                 return Offset(
                     (display % columns) * cellWidthPx,
                     topPaddingPx + (display / columns) * cellHeightPx
