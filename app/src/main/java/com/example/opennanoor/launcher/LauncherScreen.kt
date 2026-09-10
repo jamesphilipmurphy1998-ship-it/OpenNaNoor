@@ -785,7 +785,15 @@ private fun Dock(
                 Offset(restGapPx + slot * restPitchPx, 0f)
             }
             val animatedOffset = remember(slot) { Animatable(basePosition, Offset.VectorConverter) }
-            LaunchedEffect(slot) {
+            // Keyed on items.size too, not just slot - an icon whose index
+            // doesn't change across a removal (anything before the one
+            // that left) would otherwise keep running the same collector
+            // it started with, closed over the packing from before the
+            // removal. Compose only restarts a LaunchedEffect when its key
+            // changes, and slot alone doesn't, so the leftover icons never
+            // picked up the new, wider spacing - they just kept their old
+            // positions with the freed space sitting unused past them.
+            LaunchedEffect(slot, items.size) {
                 androidx.compose.runtime.snapshotFlow { targetX(slot) }
                     .collectLatest { x ->
                         animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
