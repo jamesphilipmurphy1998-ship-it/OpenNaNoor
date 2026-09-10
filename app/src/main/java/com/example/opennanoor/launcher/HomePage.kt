@@ -29,7 +29,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -63,6 +65,9 @@ fun HomePage(
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit,
     onRemove: (slot: Int) -> Unit,
+    /** Set only on the page an icon just spilled off of - see [SpillEvent]. */
+    spillEvent: SpillEvent? = null,
+    onSpillAnimationDone: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -216,6 +221,51 @@ fun HomePage(
                         modifier = Modifier.align(Alignment.TopStart)
                     )
                 }
+            }
+        }
+
+        // The real data has already moved this item to the next page by the
+        // time spillEvent arrives - this is a departure-only ghost, drawn on
+        // top of the page it left, sliding off to the right the same way an
+        // icon already slides aside when something is dropped between it and
+        // its neighbour, then fading out. It plays once and reports back so
+        // the event doesn't linger and replay on the next unrelated drop.
+        if (spillEvent != null) {
+            val capacity = columns * rows
+            val lastSlot = capacity - 1
+            val ghostBase = remember(pageIndex, columns, cellWidthPx, cellHeightPx, topPaddingPx) {
+                Offset(
+                    (lastSlot % columns) * cellWidthPx,
+                    topPaddingPx + (lastSlot / columns) * cellHeightPx
+                )
+            }
+            val ghostOffset = remember(spillEvent) { Animatable(ghostBase, Offset.VectorConverter) }
+            val ghostAlpha = remember(spillEvent) { Animatable(1f) }
+            LaunchedEffect(spillEvent) {
+                launch {
+                    ghostOffset.animateTo(
+                        ghostBase + Offset(cellWidthPx * 1.4f, 0f),
+                        tween(REFLOW_ANIMATION_MS)
+                    )
+                }
+                launch {
+                    delay(REFLOW_ANIMATION_MS / 2L)
+                    ghostAlpha.animateTo(0f, tween(REFLOW_ANIMATION_MS / 2))
+                }
+                delay(REFLOW_ANIMATION_MS.toLong())
+                onSpillAnimationDone()
+            }
+            Box(
+                Modifier
+                    .size(cellWidth, cellHeight)
+                    .offset {
+                        val p = ghostOffset.value
+                        androidx.compose.ui.unit.IntOffset(p.x.toInt(), p.y.toInt())
+                    }
+                    .graphicsLayer { alpha = ghostAlpha.value },
+                contentAlignment = Alignment.Center
+            ) {
+                HomeItemTile(item = spillEvent.item, onClick = {})
             }
         }
     }

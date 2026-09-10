@@ -22,6 +22,15 @@ sealed class HomeLocation {
     data class Folder(val folderId: String, val componentId: String) : HomeLocation()
 }
 
+/**
+ * One icon that just spilled off the end of a full page onto the next one -
+ * kept around only long enough for the UI to play the same push-aside
+ * motion a live drag already shows, on the page it left, before clearing
+ * itself. The data has already moved; this is purely a cue for that one
+ * departure animation.
+ */
+data class SpillEvent(val item: HomeItem, val fromPage: Int)
+
 data class LauncherUiState(
     val pages: List<List<HomeItem>> = emptyList(),
     val dock: List<HomeItem> = emptyList(),
@@ -32,6 +41,7 @@ data class LauncherUiState(
     val columns: Int = 4,
     val dockIconCount: Int = 4,
     val openFolderId: String? = null,
+    val spillEvent: SpillEvent? = null,
     val loading: Boolean = true
 ) {
     /** The folder currently shown full-screen, if any, resolved fresh each state. */
@@ -207,14 +217,21 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     ?: return
         }
 
-        insertItem(sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
+        val spillEvent = insertItem(
+            sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold
+        )
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
             page.isNotEmpty() || pagesWorking.size == 1
         }.ifEmpty { listOf(mutableListOf()) }
 
-        _state.value = current.copy(pages = finalPages, dock = dockWorking)
+        _state.value = current.copy(pages = finalPages, dock = dockWorking, spillEvent = spillEvent)
         persist(finalPages, dockWorking)
+    }
+
+    /** Clears a [SpillEvent] once the UI has finished playing its departure animation. */
+    fun clearSpillEvent() {
+        _state.value = _state.value.copy(spillEvent = null)
     }
 
     /**
@@ -265,7 +282,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         columns: Int,
         dockCapacity: Int,
         fold: Boolean
-    ) {
+    ): SpillEvent? {
         val capacity = columns * HomeLayout.ROWS_PER_PAGE
 
         // A folder is never a drop destination in its own right - dropping
@@ -291,12 +308,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 occupant is HomeItem.FolderItem && item is HomeItem.AppItem ||
                     occupant is HomeItem.AppItem && item is HomeItem.AppItem && occupant != item
                 )
-            if (!willMerge) return
+            if (!willMerge) return null
         }
 
         val targetList = listFor(destination) ?: pagesWorking.lastOrNull() ?: run {
             pagesWorking.add(mutableListOf(item))
-            return
+            return null
         }
 
         val insertIndex = when (val target = destination) {
@@ -338,8 +355,10 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         // the next page instead, cascading again if that page was also
         // full, rather than sitting in the current one past its own row
         // count.
-        if (destination is HomeLocation.Page) {
+        return if (destination is HomeLocation.Page) {
             spillOverflow(destination.page, pagesWorking, capacity)
+        } else {
+            null
         }
     }
 
@@ -353,12 +372,18 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         pageIndex: Int,
         pagesWorking: MutableList<MutableList<HomeItem>>,
         capacity: Int
-    ) {
+    ): SpillEvent? {
+        // Only the first page's departure gets a SpillEvent - a cascade
+        // reaching a second or third full page in a row is rare enough,
+        // and animating each of those in turn would need its own queue
+        // rather than one event, not worth it for how seldom it happens.
+        var firstSpill: SpillEvent? = null
         var index = pageIndex
         while (true) {
-            val page = pagesWorking.getOrNull(index) ?: return
-            if (page.size <= capacity) return
+            val page = pagesWorking.getOrNull(index) ?: return firstSpill
+            if (page.size <= capacity) return firstSpill
             val overflow = page.removeAt(page.lastIndex)
+            if (firstSpill == null) firstSpill = SpillEvent(overflow, index)
             val nextIndex = index + 1
             if (nextIndex >= pagesWorking.size) pagesWorking.add(mutableListOf())
             pagesWorking[nextIndex].add(0, overflow)
@@ -377,10 +402,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
-        insertItem(HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold)
+        val spillEvent = insertItem(
+            HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold
+        )
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
-        _state.value = current.copy(pages = finalPages, dock = dockWorking)
+        _state.value = current.copy(pages = finalPages, dock = dockWorking, spillEvent = spillEvent)
         persist(finalPages, dockWorking)
     }
 

@@ -83,6 +83,7 @@ class LauncherActivity : ComponentActivity() {
                     onRemoveFromFolder = vm::removeFromFolder,
                     onRenameFolder = vm::renameFolder,
                     onUninstall = vm::uninstallApp,
+                    onSpillAnimationDone = vm::clearSpillEvent,
                     modifier = Modifier.fillMaxSize()
                 )
             }

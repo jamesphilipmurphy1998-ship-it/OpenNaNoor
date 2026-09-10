@@ -105,6 +105,7 @@ fun LauncherScreen(
     onRemoveFromFolder: (folderId: String, componentId: String) -> Unit,
     onRenameFolder: (folderId: String, newName: String) -> Unit,
     onUninstall: (ComponentName) -> Unit,
+    onSpillAnimationDone: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -366,7 +367,9 @@ fun LauncherScreen(
                     onEnterEditing = { onEditingChange(true) },
                     onDragMoved = ::handleDragMoved,
                     onDragEnded = ::handleDragEnded,
-                    onRemove = { slot -> onRemove(pageIndex, slot) }
+                    onRemove = { slot -> onRemove(pageIndex, slot) },
+                    spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
+                    onSpillAnimationDone = onSpillAnimationDone
                 )
             }
 
