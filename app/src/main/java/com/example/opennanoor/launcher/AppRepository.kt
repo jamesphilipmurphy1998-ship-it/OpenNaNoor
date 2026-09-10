@@ -35,6 +35,14 @@ object AppRepository {
                     rawIcon = info.loadIcon(pm)
                 )
             }
+            // Some apps' manifests match the launcher query more than once
+            // (seen in practice with Hostelworld) - the package manager then
+            // hands back two ResolveInfo entries for the exact same
+            // activity. Every HomeItem's id is derived from the component
+            // alone, so two entries with an identical component crashed
+            // every LazyVerticalGrid keyed on that id - the drawer, a
+            // folder, the dock preview - with "Key ... was already used".
+            .distinctBy { it.component }
             .sortedBy { it.label.lowercase() }
             .toList()
     }
