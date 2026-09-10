@@ -109,7 +109,18 @@ fun HomePage(
             // this drag - animating it every frame invalidates just this
             // tile's layout, not a recomposition that could reach the
             // pager and cancel whichever tile's gesture is live.
-            val animatedOffset = remember(pageIndex, slot) { Animatable(targetOffset(), Offset.VectorConverter) }
+            //
+            // Seeded with the tile's plain, undisplaced position - not
+            // targetOffset() - so the very first composition of a tile
+            // (paging to a new screen, or a reflow bringing a new slot into
+            // existence) never reads drag state inside a remember{}
+            // initializer, which runs during composition. The snapshotFlow
+            // below corrects it to the true displaced position on its first
+            // emission, a frame later at most.
+            val basePosition = remember(pageIndex, slot, columns, cellWidthPx, cellHeightPx, topPaddingPx) {
+                Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
+            }
+            val animatedOffset = remember(pageIndex, slot) { Animatable(basePosition, Offset.VectorConverter) }
             LaunchedEffect(pageIndex, slot) {
                 snapshotFlow { targetOffset() }
                     .collectLatest { target ->

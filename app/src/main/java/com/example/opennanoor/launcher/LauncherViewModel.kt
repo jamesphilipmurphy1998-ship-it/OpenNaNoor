@@ -39,6 +39,15 @@ data class LauncherUiState(
             (pages.flatten() + dock).filterIsInstance<HomeItem.FolderItem>()
                 .firstOrNull { it.folderId == id }
         }
+
+    /** Whether [component] is already placed somewhere on the home screen - a page, or a folder on one, or the dock. */
+    fun contains(component: ComponentName): Boolean =
+        (pages.flatten() + dock).any { item ->
+            when (item) {
+                is HomeItem.AppItem -> item.entry.app.component == component
+                is HomeItem.FolderItem -> item.items.any { it.entry.app.component == component }
+            }
+        }
 }
 
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
@@ -236,12 +245,26 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             is HomeLocation.Folder -> null
         }
 
+        // A full page only actually grows if this drop is going to insert a
+        // new slot into it - a fold merging into the occupant at the target
+        // slot doesn't add one. Checking only "is the drop at the tail" (the
+        // original guard) missed every interior drop into a full page: it
+        // grew the page past capacity instead of spilling, since insertion
+        // anywhere in a list shifts everything after it the same way an
+        // append does.
         var destination = to
         if (destination is HomeLocation.Page) {
             val destPage = pagesWorking.getOrNull(destination.page)
-            if (destPage != null && destPage.size >= capacity && destination.slot >= destPage.size) {
-                pagesWorking.add(destination.page + 1, mutableListOf())
-                destination = HomeLocation.Page(destination.page + 1, 0)
+            if (destPage != null && destPage.size >= capacity) {
+                val occupant = destPage.getOrNull(destination.slot.coerceIn(0, destPage.lastIndex))
+                val willMerge = fold && (
+                    occupant is HomeItem.FolderItem && item is HomeItem.AppItem ||
+                        occupant is HomeItem.AppItem && item is HomeItem.AppItem && occupant != item
+                    )
+                if (!willMerge) {
+                    pagesWorking.add(destination.page + 1, mutableListOf())
+                    destination = HomeLocation.Page(destination.page + 1, 0)
+                }
             }
         }
 
@@ -289,15 +312,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun placeFromDrawer(entry: LauncherEntry, to: HomeLocation, fold: Boolean = false) {
         val current = _state.value
-        val already = (current.pages.flatten() + current.dock).any { item ->
-            when (item) {
-                is HomeItem.AppItem -> item.entry.app.component == entry.app.component
-                is HomeItem.FolderItem -> item.items.any {
-                    it.entry.app.component == entry.app.component
-                }
-            }
-        }
-        if (already) return
+        if (current.contains(entry.app.component)) return
 
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
@@ -311,15 +326,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     /** Puts an app on the home screen if it isn't already there. */
     fun addToHome(entry: LauncherEntry) {
         val current = _state.value
-        val already = (current.pages.flatten() + current.dock).any { item ->
-            when (item) {
-                is HomeItem.AppItem -> item.entry.app.component == entry.app.component
-                is HomeItem.FolderItem -> item.items.any {
-                    it.entry.app.component == entry.app.component
-                }
-            }
-        }
-        if (already) return
+        if (current.contains(entry.app.component)) return
 
         val capacity = current.columns * HomeLayout.ROWS_PER_PAGE
         val target = current.pages.indexOfFirst { it.size < capacity }
@@ -426,7 +433,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
         val dock = current.dock.mapNotNull { item -> dropComponent(item, component) }
 
-        _state.value = current.copy(pages = pages)
+        _state.value = current.copy(pages = pages, dock = dock)
         persist(pages, dock)
     }
 

@@ -123,6 +123,19 @@ fun LauncherScreen(
 
     val pageCount = state.pages.size.coerceAtLeast(1)
     val pagerState = rememberPagerState(pageCount = { pageCount })
+
+    // Removing the last icon on a non-final page deletes that page and
+    // shifts every later one down an index - nothing told the pager, so it
+    // could keep pointing at an index that no longer means the same page,
+    // or is now out of range entirely. pageCount changes rarely (a page
+    // being added or removed, not per-frame drag movement), so reading it
+    // here in composition carries none of the risk that ruled out reading
+    // live drag fields this way.
+    LaunchedEffect(pageCount) {
+        if (pagerState.currentPage >= pageCount) {
+            pagerState.scrollToPage((pageCount - 1).coerceAtLeast(0))
+        }
+    }
     val drag = remember { DragCoordinator() }
     var lastEdgeAdvance by remember { mutableLongStateOf(0L) }
     var dockBounds by remember { mutableStateOf<Rect?>(null) }
@@ -468,22 +481,32 @@ fun LauncherScreen(
         // not join an existing one) gets the same expanded preview now too -
         // built on the fly from the two apps that would end up in it, since
         // there is no real folder yet to read contents from.
-        val armedFolder = drag.hoverTarget
-            ?.let { it as? HomeLocation.Page }
-            ?.takeIf { drag.folderArmed && it.page == pagerState.currentPage }
-            ?.let { loc ->
-                val occupant = pageItemsForPreview(state, loc.page, null)?.getOrNull(loc.slot)
-                when {
-                    occupant is HomeItem.FolderItem -> occupant
-                    occupant is HomeItem.AppItem && drag.item is HomeItem.AppItem ->
-                        HomeItem.FolderItem(
-                            folderId = "preview",
-                            name = "New Folder",
-                            items = listOf(occupant, drag.item as HomeItem.AppItem)
-                        )
-                    else -> null
+        //
+        // drag.folderArmed is checked BEFORE drag.hoverTarget is ever read,
+        // not after - hoverTarget changes on every cell the finger crosses,
+        // not once per dwell, so reading it unconditionally recomposed this
+        // on every such crossing (the same class of read this file's other
+        // comments describe cancelling a live gesture outright). Gating on
+        // folderArmed first means hoverTarget is only read once it has
+        // already settled - handleDragMoved un-arms on every hover change,
+        // so by construction it can't move again while still armed.
+        val armedFolder = if (drag.folderArmed) {
+            (drag.hoverTarget as? HomeLocation.Page)
+                ?.takeIf { it.page == pagerState.currentPage }
+                ?.let { loc ->
+                    val occupant = pageItemsForPreview(state, loc.page, null)?.getOrNull(loc.slot)
+                    when {
+                        occupant is HomeItem.FolderItem -> occupant
+                        occupant is HomeItem.AppItem && drag.item is HomeItem.AppItem ->
+                            HomeItem.FolderItem(
+                                folderId = "preview",
+                                name = "New Folder",
+                                items = listOf(occupant, drag.item as HomeItem.AppItem)
+                            )
+                        else -> null
+                    }
                 }
-            }
+        } else null
 
         AnimatedVisibility(
             visible = armedFolder != null,
@@ -888,20 +911,6 @@ internal fun pageItemsForPreview(
     return if (origin is HomeLocation.Page && origin.page == pageIndex) {
         page.filterIndexed { i, _ -> i != origin.slot }
     } else page
-}
-
-/** Which grid slot a drag position falls on, in the page's own coordinates. */
-internal fun slotAt(
-    position: Offset,
-    cellWidthPx: Float,
-    cellHeightPx: Float,
-    topPaddingPx: Float,
-    columns: Int
-): Int {
-    val centre = position + Offset(cellWidthPx / 2f, cellHeightPx / 2f)
-    val column = (centre.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
-    val row = ((centre.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
-    return row * columns + column
 }
 
 @Composable
