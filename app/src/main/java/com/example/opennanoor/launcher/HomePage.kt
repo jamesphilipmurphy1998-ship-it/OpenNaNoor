@@ -10,6 +10,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
@@ -81,6 +82,16 @@ fun HomePage(
         val topPaddingPx = with(density) { topPadding.toPx() }
 
         items.forEachIndexed { slot, item ->
+        // Wrapping each tile's whole body in key(item.id) - rather than
+        // leaving Compose to associate state with a tile by its position in
+        // this loop, the way it would by default - is what makes an app's
+        // own animation state actually follow it when a drop shifts it to
+        // a different slot. Without this, a push handed each pushed app's
+        // Animatable off to whichever app now happens to land in its OLD
+        // slot instead - both apps' icons would visibly swap positions for
+        // a frame before correcting, since each one inherited a stranger's
+        // in-flight animation instead of continuing its own.
+        key(item.id) {
             // Deliberately NOT read during composition. Recomposing this
             // subtree while its own pointerInput has a live gesture running
             // detaches the handler and Compose cancels the drag - measured at
@@ -136,53 +147,30 @@ fun HomePage(
             //
             // Seeded with the tile's plain, undisplaced position - not
             // targetOffset() - so the very first composition of a tile
-            // (paging to a new screen, or a reflow bringing a new slot into
-            // existence) never reads drag state inside a remember{}
-            // initializer, which runs during composition. The snapshotFlow
-            // below corrects it to the true displaced position on its first
-            // emission, a frame later at most.
-            //
-            // animatedOffset itself stays keyed on (pageIndex, slot) only,
-            // not on which item currently occupies it - that persistence is
-            // exactly what already keeps every OTHER tile a drop pushes
-            // aside smooth: its slot's Animatable carries over the position
-            // it was already easing toward through the live hover preview,
-            // regardless of which app ends up sitting there once the data
-            // actually commits. Adding item.id here would reset that for
-            // every pushed tile on every drop, not just this one.
-            val basePosition = remember(pageIndex, slot, columns, cellWidthPx, cellHeightPx, topPaddingPx) {
-                Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
-            }
-            val animatedOffset = remember(pageIndex, slot) { Animatable(basePosition, Offset.VectorConverter) }
-
-            // The exception is the item that was just released here - it
-            // was never part of that per-slot continuity to begin with,
-            // since a floating DragGhost (not this tile) was what tracked
-            // the finger. matchesDrop flips true for exactly the one tile
-            // this drop landed on, restarting its effect just long enough
-            // to snap the Animatable to wherever the ghost actually was
-            // before resuming the normal reflow tracking below - so this
-            // one tile's arrival continues the ghost's own motion instead
-            // of popping in from its plain grid position. justDropped is
-            // plain composable state, not live drag state, so reading it
-            // here carries none of the recomposition risk the rest of this
-            // comment block is about.
+            // (a genuinely new arrival, or paging to a new screen) never
+            // reads drag state inside a remember{} initializer, which runs
+            // during composition. The snapshotFlow below corrects it to the
+            // true displaced position on its first emission, a frame later
+            // at most. The one exception is the item that was just released
+            // here - justDropped is plain composable state, not live drag
+            // state, so reading it here carries none of that risk, and
+            // seeding at wherever its drag ghost actually was (its centre,
+            // matching how the box below centres its own content) instead
+            // of the plain grid position means its very first render already
+            // continues the ghost's motion instead of popping in below-right
+            // of it. Both remember calls below are unkeyed beyond the
+            // key(item.id) already wrapping this whole tile - that's what
+            // makes them run exactly once, when this app first appears here,
+            // and never again just because a later drop changes which slot
+            // it's rendered at.
             val dropped = justDropped
                 ?.takeIf { it.itemId == item.id && it.location == thisLocation }
-            LaunchedEffect(pageIndex, slot, dropped != null) {
-                // fromPosition is where the ghost's own centre was - the
-                // ghost is a fixed-size box centred on the finger, while
-                // this tile is a full cellWidth x cellHeight box positioned
-                // by its top-left corner with its content centred inside
-                // it. Snapping straight to fromPosition as that corner put
-                // the icon a half-cell down and to the right of where the
-                // ghost actually was, so it visibly started below-right of
-                // the target and slid up into it instead of arriving there
-                // directly. Subtracting half the cell size aligns this
-                // tile's own centre with the ghost's last centre instead.
-                dropped?.let {
-                    animatedOffset.snapTo(it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f))
-                }
+            val basePosition = remember {
+                dropped?.let { it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f) }
+                    ?: Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
+            }
+            val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
+            LaunchedEffect(Unit) {
                 snapshotFlow { targetOffset() }
                     .collectLatest { target ->
                         animatedOffset.animateTo(target, tween(REFLOW_ANIMATION_MS))
@@ -278,6 +266,7 @@ fun HomePage(
                     )
                 }
             }
+        } // key(item.id)
         }
 
         // The real data has already moved this item to the next page by the

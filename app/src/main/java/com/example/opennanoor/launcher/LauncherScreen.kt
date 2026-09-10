@@ -63,6 +63,7 @@ import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -800,46 +801,45 @@ private fun Dock(
         )
 
         items.forEachIndexed { slot, item ->
+        // Wrapping each icon's whole body in key(item.id), same as
+        // HomePage's tiles - see there for why. Without it, a drop
+        // shifting where an icon sits handed its Animatable off to
+        // whichever icon now happens to land at its OLD index instead of
+        // following the icon it actually belonged to, visibly swapping the
+        // two icons' positions for a frame.
+        key(item.id) {
             val thisLocation = HomeLocation.Dock(slot)
             val isDragOrigin = drag.active && drag.origin == thisLocation
 
-            // Slides to its displaced position instead of jumping there,
-            // the same push animation HomePage uses while reordering a
-            // page - deferred to layout/draw, never read during
-            // composition, for the same drag-cancelling reason explained
-            // there.
-            val basePosition = remember(slot, restGapPx, restPitchPx) {
-                Offset(restGapPx + slot * restPitchPx, 0f)
-            }
-            val animatedOffset = remember(slot) { Animatable(basePosition, Offset.VectorConverter) }
-            // The icon that was just released into this exact dock slot
-            // snaps to wherever its drag ghost actually was first, so its
-            // arrival continues that motion instead of popping in from its
-            // plain position - same reasoning as HomePage's own tiles.
+            // Seeded with the plain resting position, except for the icon
+            // that was just released here (justDropped is plain composable
+            // state, safe to read at composition time) - that one seeds at
+            // wherever its drag ghost actually was instead, so its very
+            // first render already continues the ghost's motion. fromPosition
+            // is in the shared outer frame the ghost is drawn in, but this
+            // icon's own x is local to the dock's left edge (localOrigin is
+            // that same translation dockBounds itself uses), and the ghost
+            // is centred on fromPosition while this icon is a fixed
+            // iconPx-wide box positioned by its left edge - both corrections
+            // are what HomePage's version does in one step for a page tile,
+            // which already lives in that outer frame the way a dock icon
+            // doesn't. Unkeyed beyond key(item.id) above, so this only ever
+            // runs once, when this app first appears in the dock.
             val dropped = justDropped
                 ?.takeIf { it.itemId == item.id && it.location == thisLocation }
-            // Keyed on items.size too, not just slot - an icon whose index
-            // doesn't change across a removal (anything before the one
-            // that left) would otherwise keep running the same collector
-            // it started with, closed over the packing from before the
-            // removal. Compose only restarts a LaunchedEffect when its key
-            // changes, and slot alone doesn't, so the leftover icons never
-            // picked up the new, wider spacing - they just kept their old
-            // positions with the freed space sitting unused past them.
-            LaunchedEffect(slot, items.size, dropped != null) {
-                // fromPosition is in the shared outer frame the ghost is
-                // drawn in (same one drag.position always is), but this
-                // tile's own x is local to the dock's left edge (localOrigin
-                // is that translation, same as dockBounds' own) - and the
-                // ghost is centred on fromPosition while this tile is a
-                // fixed iconPx-wide box positioned by its left edge. Both
-                // corrections together are what HomePage's version does in
-                // one step; the dock needs the extra frame conversion since
-                // its tiles don't already live in that outer frame the way
-                // a page's do.
-                dropped?.let {
-                    animatedOffset.snapTo(Offset(it.fromPosition.x - localOrigin.x - iconPx / 2f, 0f))
-                }
+            val basePosition = remember {
+                dropped?.let { Offset(it.fromPosition.x - localOrigin.x - iconPx / 2f, 0f) }
+                    ?: Offset(restGapPx + slot * restPitchPx, 0f)
+            }
+            val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
+            // Still keyed on items.size, even with key(item.id) now giving
+            // every icon a stable identity across a slot change - this
+            // restarts snapshotFlow's collector with a fresh closure over
+            // the current packing whenever the count actually changes,
+            // since a plain captured val (restGapPx/restPitchPx, not
+            // Compose state) inside an already-running collector otherwise
+            // keeps reading whatever it closed over at launch, forever.
+            LaunchedEffect(items.size) {
                 androidx.compose.runtime.snapshotFlow { targetX(slot) }
                     .collectLatest { x ->
                         animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
@@ -899,6 +899,7 @@ private fun Dock(
                     modifier = Modifier.alpha(if (isDragOrigin) 0f else 1f)
                 )
             }
+        } // key(item.id)
         }
     }
 }
