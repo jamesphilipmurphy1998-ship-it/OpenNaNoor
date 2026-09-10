@@ -130,12 +130,18 @@ data class HomeLayout(
                         ?.let { HomeSlot.AppSlot(it) }
 
                     "folder" -> {
+                        // distinct(): a component that somehow got saved into
+                        // a folder's members twice - possible before app list
+                        // deduplication was added - crashed every grid keyed
+                        // on it the moment that folder rendered. This heals
+                        // an already-corrupted saved layout on next load,
+                        // rather than only preventing new duplicates.
                         val members = obj.optJSONArray("members")?.let { arr ->
                             (0 until arr.length()).mapNotNull {
                                 ComponentName.unflattenFromString(arr.optString(it))
                                     ?.takeIf { c -> c in available }
                             }
-                        }.orEmpty()
+                        }.orEmpty().distinct()
                         if (members.isEmpty()) null
                         else HomeSlot.FolderSlot(
                             id = obj.optString("id").ifEmpty { newFolderId() },
