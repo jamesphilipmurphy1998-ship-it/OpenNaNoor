@@ -1214,7 +1214,15 @@ private fun Modifier.pointerInputIf(
 private const val DRAWER_DRAG_THRESHOLD = 18f
 private const val EDGE_MARGIN_PX = 28f
 private const val EDGE_HOLD_MS = 1000L
-private const val FOLDER_DWELL_MS = 1000L
+// A full page has an occupant in every single cell, unlike a normal page's
+// mix of icons and empty space - so on a full page, any reasonably-aimed
+// drop (people naturally aim for a cell's centre, which is exactly the
+// fold-zone) risks arming a fold, and the travel time alone from the dock
+// to a spot on a busy page can already approach the old 1000ms threshold
+// without the user feeling like they paused at all. Doubled so only a
+// genuinely deliberate hold - not just "however long it took to get here" -
+// arms a fold.
+private const val FOLDER_DWELL_MS = 2000L
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
 private val DOCK_AREA_HEIGHT = 96.dp
