@@ -144,15 +144,17 @@ fun LauncherScreen(
             drag.overDock = dockBounds?.contains(center) == true
             drag.overRemoveZone = editing && removeZoneBounds?.contains(center) == true
 
-            // Track the occupied slot under the finger. Resting on one long
-            // enough arms a folder; moving to a different slot disarms it.
+            // Track the folder, if any, the finger is resting over. Only a
+            // hold zone (the centre of a folder's cell - see pageDropTarget)
+            // arms the fold timer; hovering near either edge of that same
+            // cell previews an insert instead, and neither dwells.
             val hovered = if (drag.overDock || drag.overRemoveZone) null else {
-                val slot = slotAt(drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns)
-                val page = state.pages.getOrNull(pagerState.currentPage)
-                val candidate = HomeLocation.Page(pagerState.currentPage, slot)
-                if (page != null && slot in page.indices && candidate != drag.origin) {
-                    candidate
-                } else null
+                pageItemsForPreview(state, pagerState.currentPage, drag.origin)?.let { pageItems ->
+                    val target = pageDropTarget(
+                        drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns, pageItems
+                    )
+                    target.holdTarget?.let { HomeLocation.Page(pagerState.currentPage, it) }
+                }
             }
             if (hovered != drag.hoverTarget) {
                 drag.hoverTarget = hovered
@@ -199,10 +201,14 @@ fun LauncherScreen(
                         drag.end()
                         return
                     }
-                    else -> HomeLocation.Page(
-                        pagerState.currentPage,
-                        slotAt(drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns)
-                    )
+                    else -> {
+                        val pageItems = pageItemsForPreview(state, pagerState.currentPage, drag.origin)
+                            .orEmpty()
+                        val resolved = pageDropTarget(
+                            drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns, pageItems
+                        )
+                        HomeLocation.Page(pagerState.currentPage, resolved.gap)
+                    }
                 }
 
                 // Only a drop that dwelled over this exact slot folds into it.
@@ -684,6 +690,23 @@ private fun FolderOverlay(
             }
         }
     }
+}
+
+/**
+ * The items on [pageIndex], with the dragged item excluded if it originated
+ * on that same page - the "as if already removed" list every consistent
+ * drop-target computation (preview, hover, and the final drop) needs to
+ * agree on. Null if that page doesn't exist.
+ */
+internal fun pageItemsForPreview(
+    state: LauncherUiState,
+    pageIndex: Int,
+    origin: HomeLocation?
+): List<HomeItem>? {
+    val page = state.pages.getOrNull(pageIndex) ?: return null
+    return if (origin is HomeLocation.Page && origin.page == pageIndex) {
+        page.filterIndexed { i, _ -> i != origin.slot }
+    } else page
 }
 
 /** Which grid slot a drag position falls on, in the page's own coordinates. */

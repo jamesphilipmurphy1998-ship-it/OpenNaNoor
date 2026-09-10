@@ -1,12 +1,17 @@
 package com.example.opennanoor.launcher
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.tween
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -24,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -76,34 +82,47 @@ fun HomePage(
             // the tile hides without anything recomposing.
             val thisLocation = HomeLocation.Page(pageIndex, slot)
 
-            val baseX = (slot % columns) * cellWidthPx
-            val baseY = topPaddingPx + (slot / columns) * cellHeightPx
+            fun targetOffset(): Offset {
+                val display = displacedSlot(
+                    slot = slot,
+                    items = items,
+                    columns = columns,
+                    pageIndex = pageIndex,
+                    drag = drag,
+                    currentPage = currentPage(),
+                    cellWidthPx = cellWidthPx,
+                    cellHeightPx = cellHeightPx,
+                    topPaddingPx = topPaddingPx
+                )
+                return Offset(
+                    (display % columns) * cellWidthPx,
+                    topPaddingPx + (display / columns) * cellHeightPx
+                )
+            }
+
+            // Slides to its displaced position over a short animation rather
+            // than jumping straight there. Animating the pixel position
+            // (not the slot index) means a move that wraps to a new row
+            // slides diagonally, matching how this actually looks on iOS.
+            // The Animatable's value is only ever read inside offset{},
+            // deferred to the layout phase same as everything else about
+            // this drag - animating it every frame invalidates just this
+            // tile's layout, not a recomposition that could reach the
+            // pager and cancel whichever tile's gesture is live.
+            val animatedOffset = remember(pageIndex, slot) { Animatable(targetOffset(), Offset.VectorConverter) }
+            LaunchedEffect(pageIndex, slot) {
+                snapshotFlow { targetOffset() }
+                    .collectLatest { target ->
+                        animatedOffset.animateTo(target, tween(REFLOW_ANIMATION_MS))
+                    }
+            }
 
             Box(
                 Modifier
                     .size(cellWidth, cellHeight)
-                    // Live displacement: while a drag hovers over this page
-                    // without dwelling long enough to fold, every tile from
-                    // the hover point onward previews where it would land by
-                    // sliding to that slot - the same thing iOS does. Purely
-                    // a read inside the layout lambda, computed fresh each
-                    // frame from the drag's current position; nothing here
-                    // is a composition-time value, so nothing recomposes.
                     .offset {
-                        val display = displacedSlot(
-                            slot = slot,
-                            items = items,
-                            columns = columns,
-                            pageIndex = pageIndex,
-                            drag = drag,
-                            currentPage = currentPage(),
-                            cellWidthPx = cellWidthPx,
-                            cellHeightPx = cellHeightPx,
-                            topPaddingPx = topPaddingPx
-                        )
-                        val x = (display % columns) * cellWidthPx
-                        val y = topPaddingPx + (display / columns) * cellHeightPx
-                        androidx.compose.ui.unit.IntOffset(x.toInt(), y.toInt())
+                        val p = animatedOffset.value
+                        androidx.compose.ui.unit.IntOffset(p.x.toInt(), p.y.toInt())
                     }
                     // Keyed only on this cell's identity. Keying on `editing`
                     // or on the page's item list tore the gesture detector down
@@ -116,7 +135,7 @@ fun HomePage(
                                 drag.start(
                                     item = item,
                                     origin = HomeLocation.Page(pageIndex, slot),
-                                    startPosition = Offset(baseX, baseY)
+                                    startPosition = targetOffset()
                                 )
                             },
                             onDrag = { change, amount ->
@@ -187,39 +206,90 @@ private fun displacedSlot(
         !drag.overDock && !drag.overRemoveZone && currentPage == pageIndex
     if (!previewing) return slot
 
-    val hovered = slotAt(drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns)
     val origin = drag.origin
 
     return if (origin is HomeLocation.Page && origin.page == pageIndex) {
         // Dragging within this page: the item is conceptually already gone
         // from its old spot, and a gap opens at the hover point.
         val withoutDragged = if (slot > origin.slot) slot - 1 else slot
-        val capacity = (items.size - 1).coerceAtLeast(0)
-        val gap = hovered.coerceIn(0, capacity)
-        val occupantAtGap = items.withIndex()
-            .filter { it.index != origin.slot }
-            .getOrNull(gap)?.value
-        settle(withoutDragged, gap, occupantAtGap)
+        val itemsWithoutDragged = items.filterIndexed { i, _ -> i != origin.slot }
+        val target = pageDropTarget(
+            drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, itemsWithoutDragged
+        )
+        settle(withoutDragged, target)
     } else {
         // Arriving from elsewhere (another page, the dock, a folder, or the
         // drawer): nothing has left this page, so a gap simply opens.
-        val gap = hovered.coerceIn(0, items.size)
-        settle(slot, gap, items.getOrNull(gap))
+        val target = pageDropTarget(
+            drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items
+        )
+        settle(slot, target)
     }
 }
 
-/**
- * A folder sitting exactly at the gap a drag is hovering over holds its
- * position rather than sliding aside - hovering directly on it means
- * "drop in", not "insert before or after", so it should look like a
- * landing target, not something in the way. Anything else at or past the
- * gap slides over as usual.
- */
-private fun settle(adjustedSlot: Int, gap: Int, occupant: HomeItem?): Int = when {
-    adjustedSlot == gap && occupant is HomeItem.FolderItem -> adjustedSlot
-    adjustedSlot >= gap -> adjustedSlot + 1
+private fun settle(adjustedSlot: Int, target: PageDropTarget): Int = when {
+    adjustedSlot == target.holdTarget -> adjustedSlot
+    adjustedSlot >= target.gap -> adjustedSlot + 1
     else -> adjustedSlot
 }
+
+/**
+ * Where a drag over a page's grid would land. [gap] is the insertion index
+ * used to push other tiles aside - the same meaning it always had. But a
+ * cell occupied by a folder can't mean only one thing: hovering near its
+ * centre should offer dropping in (the folder holds still, [holdTarget] is
+ * set), while hovering near either edge of that same cell should mean
+ * inserting before or after it instead (the folder slides like anything
+ * else would, [holdTarget] is null) - otherwise there is no way to place
+ * anything next to a folder at all, since both interactions would
+ * otherwise resolve to the exact same cell.
+ *
+ * Used identically for the live preview, for deciding when to arm the fold
+ * timer, and for the actual drop - if these three computed the gap
+ * differently, what got shown while dragging could disagree with what
+ * actually happened on release.
+ */
+internal data class PageDropTarget(val gap: Int, val holdTarget: Int?)
+
+internal fun pageDropTarget(
+    position: Offset,
+    cellWidthPx: Float,
+    cellHeightPx: Float,
+    topPaddingPx: Float,
+    columns: Int,
+    items: List<HomeItem>
+): PageDropTarget {
+    val centre = position + Offset(cellWidthPx / 2f, cellHeightPx / 2f)
+    val column = (centre.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
+    val row = ((centre.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
+    val cellIndex = (row * columns + column).coerceIn(0, items.size)
+    val occupant = items.getOrNull(cellIndex)
+
+    return when (occupant) {
+        null -> PageDropTarget(gap = cellIndex, holdTarget = null)
+
+        // Two apps only ever mean one thing when they touch: dwell to fold,
+        // release quickly to push. No edge zones needed - there is no
+        // "insert without folding" case a plain push doesn't already cover.
+        is HomeItem.AppItem -> PageDropTarget(gap = cellIndex, holdTarget = cellIndex)
+
+        // A folder is also a place two different intents land on the same
+        // cell: dwelling in its centre offers dropping in, but either edge
+        // needs to mean "insert beside it" instead, or there would be no
+        // way to place anything next to a folder at all.
+        is HomeItem.FolderItem -> {
+            val withinCell = ((centre.x - column * cellWidthPx) / cellWidthPx).coerceIn(0f, 1f)
+            when {
+                withinCell < FOLDER_ZONE_START -> PageDropTarget(gap = cellIndex, holdTarget = null)
+                withinCell > FOLDER_ZONE_END -> PageDropTarget(gap = cellIndex + 1, holdTarget = null)
+                else -> PageDropTarget(gap = cellIndex, holdTarget = cellIndex)
+            }
+        }
+    }
+}
+
+private const val FOLDER_ZONE_START = 0.3f
+private const val FOLDER_ZONE_END = 0.7f
 
 /** The small circled minus that takes an item off the home screen. */
 @Composable
@@ -267,3 +337,4 @@ fun rememberWobble(enabled: Boolean, seed: Int): Float {
 
 private const val WOBBLE_DEGREES = 2.4f
 private const val WOBBLE_PERIOD_MS = 220
+private const val REFLOW_ANIMATION_MS = 250
