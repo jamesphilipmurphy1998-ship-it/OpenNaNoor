@@ -43,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -219,30 +220,42 @@ fun LauncherScreen(
         // recomposition (remove badges appearing on every other tile) that
         // was disrupting Compose's tracking of the still-active gesture -
         // the drag would start, then die with zero move events recorded.
-        LaunchedEffect(drag.active) {
-            if (drag.active) onEditingChange(true)
+        // Keyed on Unit, not on the drag field itself - using a changing
+        // field as a LaunchedEffect key means reading it during composition
+        // to evaluate the key, which is the same recomposition-cancels-the-
+        // gesture problem the ghost and the armed-tile highlight both hit.
+        // snapshotFlow watches it from inside the effect instead.
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow { drag.active }
+                .collect { active -> if (active) onEditingChange(true) }
         }
 
-        // Resting over one slot for this long arms the folder merge, and
-        // shows it by swelling the target tile.
-        LaunchedEffect(drag.hoverTarget) {
-            val target = drag.hoverTarget
-            if (target != null) {
-                kotlinx.coroutines.delay(FOLDER_DWELL_MS)
-                if (drag.hoverTarget == target) drag.folderArmed = true
-            }
+        // Resting over one slot for this long arms the folder merge.
+        LaunchedEffect(Unit) {
+            androidx.compose.runtime.snapshotFlow { drag.hoverTarget }
+                .collectLatest { target ->
+                    if (target != null) {
+                        kotlinx.coroutines.delay(FOLDER_DWELL_MS)
+                        drag.folderArmed = true
+                    }
+                }
         }
 
         Column(Modifier.fillMaxSize()) {
+            // userScrollEnabled and the swipe-up gesture below used to read
+            // drag.active directly, toggling off the instant a tile drag
+            // began. That is a composition-time parameter on the pager
+            // itself - the direct parent of every tile - and changing it
+            // turned out to be what was cancelling the drag, not anything in
+            // HomePage. A long-press-then-drag already consumes its own
+            // pointer events, so the pager's plain swipe detectors leave it
+            // alone without needing to be switched off by hand.
             HorizontalPager(
                 state = pagerState,
-                userScrollEnabled = !drag.active,
                 modifier = Modifier
                     .weight(1f)
                     .onGloballyPositioned { pagerSizePx = it.size }
-                    // A swipe up anywhere on a page opens the drawer, as on a
-                    // stock home screen - only while nothing is being dragged.
-                    .pointerInputIf(!drag.active) {
+                    .pointerInput(Unit) {
                         detectVerticalDragGestures { _, dragAmount ->
                             if (dragAmount < -DRAWER_DRAG_THRESHOLD) onDrawerOpenChange(true)
                         }
@@ -251,10 +264,6 @@ fun LauncherScreen(
                 HomePage(
                     items = state.pages.getOrNull(pageIndex).orEmpty(),
                     pageIndex = pageIndex,
-                    folderTargetSlot = drag.hoverTarget
-                        ?.let { it as? HomeLocation.Page }
-                        ?.takeIf { it.page == pageIndex && drag.folderArmed }
-                        ?.slot,
                     columns = state.columns,
                     rows = HomeLayout.ROWS_PER_PAGE,
                     editing = editing,
