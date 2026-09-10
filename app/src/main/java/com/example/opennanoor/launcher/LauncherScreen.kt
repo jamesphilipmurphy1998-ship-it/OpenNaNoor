@@ -1386,7 +1386,7 @@ private const val FOLDER_DWELL_MS = 2000L
 private const val REJECT_RETURN_MS = 200
 
 /** How long a folder takes to grow open, and to shrink back away. */
-private const val FOLDER_OPEN_MS = 220
+private const val FOLDER_OPEN_MS = 110
 private const val FOLDER_CLOSE_MS = 160
 
 /**
