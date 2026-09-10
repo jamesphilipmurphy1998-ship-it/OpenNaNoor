@@ -280,8 +280,11 @@ internal fun pageDropTarget(
     }
 }
 
-private const val FOLDER_ZONE_START = 0.3f
-private const val FOLDER_ZONE_END = 0.7f
+// Widened from an earlier 0.3/0.7. A real finger can't hold still to the
+// pixel - natural tremor crossed that narrow a boundary often enough that
+// dwelling to fold felt inconsistent, each crossing resetting the timer.
+private const val FOLDER_ZONE_START = 0.2f
+private const val FOLDER_ZONE_END = 0.8f
 
 /** The small circled minus that takes an item off the home screen. */
 @Composable

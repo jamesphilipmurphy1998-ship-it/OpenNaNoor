@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -44,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -236,9 +238,14 @@ fun LauncherScreen(
                 .collect { active -> if (active) onEditingChange(true) }
         }
 
-        // Resting over one slot for this long arms the folder merge.
+        // Resting over one slot for this long arms the folder merge. The
+        // hover value is debounced first - a real finger flickers in and
+        // out of a target by a pixel or two even while trying to hold
+        // still, and reacting to every one of those as a fresh target reset
+        // the dwell countdown before it could ever finish.
         LaunchedEffect(Unit) {
             androidx.compose.runtime.snapshotFlow { drag.hoverTarget }
+                .debounce(HOVER_DEBOUNCE_MS)
                 .collectLatest { target ->
                     if (target != null) {
                         kotlinx.coroutines.delay(FOLDER_DWELL_MS)
@@ -316,6 +323,34 @@ fun LauncherScreen(
                 .size(48.dp)
                 .clickable(onClick = onOpenSettings)
         )
+
+        // A visible way out of arranging mode, alongside back and home,
+        // which already work. Sized generously and pinned above the grid's
+        // own top padding - the first attempt sat right on top of the
+        // top-right tile's remove badge, and a tap aimed at the button
+        // could land on the sliver of badge still exposed beside it,
+        // removing that tile instead of exiting.
+        AnimatedVisibility(
+            visible = editing,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(end = 12.dp)
+        ) {
+            Text(
+                text = "Done",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier
+                    .padding(top = insets.calculateTopPadding())
+                    .heightIn(min = 40.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF3A3A3C))
+                    .clickable { onEditingChange(false) }
+                    .padding(horizontal = 18.dp, vertical = 9.dp)
+            )
+        }
 
         AnimatedVisibility(
             visible = editing && drag.active,
@@ -734,6 +769,7 @@ private const val DRAWER_DRAG_THRESHOLD = 18f
 private const val EDGE_MARGIN_PX = 60f
 private const val EDGE_ADVANCE_COOLDOWN_MS = 450L
 private const val FOLDER_DWELL_MS = 1000L
+private const val HOVER_DEBOUNCE_MS = 80L
 private val DOCK_AREA_HEIGHT = 96.dp
 private val GHOST_SIZE = 72.dp
 private const val GHOST_SCALE = 1.12f
