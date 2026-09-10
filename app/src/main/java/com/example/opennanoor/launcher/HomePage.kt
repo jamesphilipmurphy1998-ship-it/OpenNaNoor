@@ -68,6 +68,8 @@ fun HomePage(
     /** Set only on the page an icon just spilled off of - see [SpillEvent]. */
     spillEvent: SpillEvent? = null,
     onSpillAnimationDone: () -> Unit = {},
+    /** Set only on the page an icon was just released onto - see [JustDropped]. */
+    justDropped: JustDropped? = null,
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -139,11 +141,36 @@ fun HomePage(
             // initializer, which runs during composition. The snapshotFlow
             // below corrects it to the true displaced position on its first
             // emission, a frame later at most.
+            //
+            // animatedOffset itself stays keyed on (pageIndex, slot) only,
+            // not on which item currently occupies it - that persistence is
+            // exactly what already keeps every OTHER tile a drop pushes
+            // aside smooth: its slot's Animatable carries over the position
+            // it was already easing toward through the live hover preview,
+            // regardless of which app ends up sitting there once the data
+            // actually commits. Adding item.id here would reset that for
+            // every pushed tile on every drop, not just this one.
             val basePosition = remember(pageIndex, slot, columns, cellWidthPx, cellHeightPx, topPaddingPx) {
                 Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
             }
             val animatedOffset = remember(pageIndex, slot) { Animatable(basePosition, Offset.VectorConverter) }
-            LaunchedEffect(pageIndex, slot) {
+
+            // The exception is the item that was just released here - it
+            // was never part of that per-slot continuity to begin with,
+            // since a floating DragGhost (not this tile) was what tracked
+            // the finger. matchesDrop flips true for exactly the one tile
+            // this drop landed on, restarting its effect just long enough
+            // to snap the Animatable to wherever the ghost actually was
+            // before resuming the normal reflow tracking below - so this
+            // one tile's arrival continues the ghost's own motion instead
+            // of popping in from its plain grid position. justDropped is
+            // plain composable state, not live drag state, so reading it
+            // here carries none of the recomposition risk the rest of this
+            // comment block is about.
+            val dropped = justDropped
+                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+            LaunchedEffect(pageIndex, slot, dropped != null) {
+                dropped?.let { animatedOffset.snapTo(it.fromPosition) }
                 snapshotFlow { targetOffset() }
                     .collectLatest { target ->
                         animatedOffset.animateTo(target, tween(REFLOW_ANIMATION_MS))

@@ -86,6 +86,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -152,6 +153,15 @@ fun LauncherScreen(
     var dockBounds by remember { mutableStateOf<Rect?>(null) }
     var removeZoneBounds by remember { mutableStateOf<Rect?>(null) }
     var outerOrigin by remember { mutableStateOf(Offset.Zero) }
+    // The ghost tracks the finger throughout a drag, but the instant it
+    // ends, drag.end() wipes drag.position and the real tile at the target
+    // slot just appears there with no transition - the ghost vanishing and
+    // a tile popping into place at the same frame read as a jolt. Capturing
+    // where the ghost actually was right before that reset lets the arriving
+    // tile seed its own reflow animation from that exact point instead of
+    // its plain grid position, so release continues the same motion instead
+    // of cutting between two different renders of the same icon.
+    var justDropped by remember { mutableStateOf<JustDropped?>(null) }
     val topPadding = 16.dp + insets.calculateTopPadding()
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -277,6 +287,17 @@ fun LauncherScreen(
                 // Only a drop that dwelled over this exact slot folds into it.
                 val fold = drag.folderArmed && drag.hoverTarget == target
                 val origin = drag.origin
+
+                // A fold merges into an existing tile rather than landing as
+                // one of its own - there's no standalone arrival to seed.
+                if (!fold) {
+                    justDropped = JustDropped(item.id, target, drag.position)
+                    scope.launch {
+                        delay(REFLOW_ANIMATION_MS.toLong())
+                        justDropped = null
+                    }
+                }
+
                 if (origin != null) onMove(origin, target, fold)
                 else if (item is HomeItem.AppItem) onPlaceFromDrawer(item.entry, target, fold)
             }
@@ -369,7 +390,8 @@ fun LauncherScreen(
                     onDragEnded = ::handleDragEnded,
                     onRemove = { slot -> onRemove(pageIndex, slot) },
                     spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
-                    onSpillAnimationDone = onSpillAnimationDone
+                    onSpillAnimationDone = onSpillAnimationDone,
+                    justDropped = justDropped?.takeIf { it.location is HomeLocation.Page && it.location.page == pageIndex }
                 )
             }
 
@@ -392,6 +414,7 @@ fun LauncherScreen(
                     dockBounds = bounds.translate(-outerOrigin)
                 },
                 outerOrigin = outerOrigin,
+                justDropped = justDropped?.takeIf { it.location is HomeLocation.Dock },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
@@ -678,6 +701,7 @@ private fun Dock(
     // is - this is that same translation, handed down so each icon can do
     // it for itself at the moment its drag starts.
     outerOrigin: Offset,
+    justDropped: JustDropped? = null,
     modifier: Modifier = Modifier
 ) {
     val iconSize = dockIconSize(slotCount)
@@ -788,6 +812,12 @@ private fun Dock(
                 Offset(restGapPx + slot * restPitchPx, 0f)
             }
             val animatedOffset = remember(slot) { Animatable(basePosition, Offset.VectorConverter) }
+            // The icon that was just released into this exact dock slot
+            // snaps to wherever its drag ghost actually was first, so its
+            // arrival continues that motion instead of popping in from its
+            // plain position - same reasoning as HomePage's own tiles.
+            val dropped = justDropped
+                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
             // Keyed on items.size too, not just slot - an icon whose index
             // doesn't change across a removal (anything before the one
             // that left) would otherwise keep running the same collector
@@ -796,7 +826,8 @@ private fun Dock(
             // changes, and slot alone doesn't, so the leftover icons never
             // picked up the new, wider spacing - they just kept their old
             // positions with the freed space sitting unused past them.
-            LaunchedEffect(slot, items.size) {
+            LaunchedEffect(slot, items.size, dropped != null) {
+                dropped?.let { animatedOffset.snapTo(it.fromPosition) }
                 androidx.compose.runtime.snapshotFlow { targetX(slot) }
                     .collectLatest { x ->
                         animatedOffset.animateTo(Offset(x, 0f), tween(REFLOW_ANIMATION_MS))
@@ -1102,6 +1133,14 @@ private fun FolderOverlay(
         }
     }
 }
+
+/**
+ * The item just released at [location] and where its drag ghost actually
+ * was the instant it let go - a one-shot cue so that tile's own arrival can
+ * seed its reflow animation from there instead of popping into its plain
+ * grid position with no transition. Cleared a beat later by whoever set it.
+ */
+data class JustDropped(val itemId: String, val location: HomeLocation, val fromPosition: Offset)
 
 /**
  * The items on [pageIndex], with the dragged item excluded if it originated
