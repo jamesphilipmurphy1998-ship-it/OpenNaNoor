@@ -1558,15 +1558,16 @@ private const val FOLDER_DWELL_MS = 1000L
 private const val REJECT_RETURN_MS = 200
 
 /** How long a folder takes to grow open, and to shrink back away. */
-private const val FOLDER_OPEN_MS = 110
-private const val FOLDER_CLOSE_MS = 160
+private const val FOLDER_OPEN_MS = 220
+private const val FOLDER_CLOSE_MS = 220
 
 /**
- * How large a folder starts before it expands - close enough to full size
- * that it reads as the same panel growing, not a separate thing zooming in
- * from nowhere.
+ * How large a folder starts before it expands. 0.86 (only a 14% size
+ * change) combined with a 110ms duration read as barely-there - closer to
+ * the panel just appearing at full size than visibly growing into place.
+ * Starting noticeably smaller gives the eye something to actually track.
  */
-private const val FOLDER_OPEN_FROM_SCALE = 0.86f
+private const val FOLDER_OPEN_FROM_SCALE = 0.5f
 
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
