@@ -890,7 +890,14 @@ private fun DragGhost(drag: DragCoordinator) {
             }
             .size(GHOST_SIZE)
             .graphicsLayer {
-                val shown = drag.item != null
+                // Also hidden once a fold has armed - the ghost sits right
+                // next to (or on top of) wherever the fold preview is
+                // about to grow from, since arming only happens while
+                // hovering close to that same spot. Left showing, it read
+                // as "the icon itself expanding" - the preview growing in
+                // right underneath a same-sized, already-familiar shape
+                // rather than something new appearing at the folder.
+                val shown = drag.item != null && !drag.folderArmed
                 alpha = if (shown) 1f else 0f
                 scaleX = GHOST_SCALE
                 scaleY = GHOST_SCALE
