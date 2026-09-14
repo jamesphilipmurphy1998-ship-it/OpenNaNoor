@@ -145,43 +145,49 @@ fun HomePage(
             // tile's layout, not a recomposition that could reach the
             // pager and cancel whichever tile's gesture is live.
             //
-            // Seeded with the tile's plain, undisplaced position - never
-            // reads drag state inside this remember{} initializer, which
-            // runs during composition. basePosition/animatedOffset are
-            // unkeyed beyond key(item.id) above, so this only runs once,
-            // the first time this app appears on this page at all.
+            // justDropped is plain composable state, not live drag state, so
+            // reading it here carries none of the composition-time risk the
+            // rest of this comment block is about.
+            val dropped = justDropped
+                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+
+            // Seeded with the tile's plain, undisplaced position - except
+            // for the item that was just released here, seeded instead at
+            // wherever its drag ghost actually was (the ghost's own centre,
+            // matching how the box below centres its own content). Without
+            // that exception this tile's very first frame rendered at its
+            // plain (i.e. final) position, one frame before the
+            // LaunchedEffect below got a chance to run and snap it back to
+            // the ghost's position to animate forward from - a flash at the
+            // target immediately followed by a jump away from it, reported
+            // as "the target location keeps flashing... before it pings to
+            // the target location". Seeding it correctly up front here
+            // removes that gap entirely for a genuinely new arrival.
+            // basePosition/animatedOffset are unkeyed beyond key(item.id)
+            // above, so this only runs once, the first time this app
+            // appears on this page at all.
             val basePosition = remember {
-                Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
+                dropped?.let { it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f) }
+                    ?: Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
 
-            // The item that was just released here snaps to wherever its
-            // drag ghost actually was (the ghost's own centre, matching how
-            // the box below centres its own content) before resuming normal
-            // tracking - justDropped is plain composable state, not live
-            // drag state, so reading it here carries none of the
-            // composition-time risk the seeding above is about.
-            //
-            // This can't be handled by seeding basePosition once at first
-            // composition the way SpillEvent's ghost is: a REORDER drops an
-            // app that was already on this page, whose key(item.id) block
-            // (and Animatable) has existed since long before this drop - it
-            // was never a fresh composition remember{} could catch. Without
-            // this, only a genuinely new arrival (from the drawer, another
-            // page, the dock) got seeded correctly; a same-page reorder's
-            // origin tile - hidden but still being animated by the live
-            // hover preview's own slot-based settle() math the whole time,
-            // never actually tracking the real finger position - just
-            // reappeared from wherever that discrete preview last placed
-            // it, not from the ghost, which is what "comes in from an angle
-            // I wasn't holding it" turned out to mean.
+            // The remember{} seed above only ever fires once ever, so it
+            // can't catch a REORDER - dropping an app that was already on
+            // this page, whose key(item.id) block (and Animatable) has
+            // existed since long before this drop. That icon was hidden but
+            // still being animated by the live hover preview's own
+            // slot-based settle() math the whole time, never actually
+            // tracking the real finger - so it reappeared from wherever
+            // that discrete preview last placed it, not from the ghost
+            // ("comes in from an angle I wasn't holding it"). This effect's
+            // own snapTo below catches that case; for a new arrival it just
+            // redundantly re-confirms the seed above (same value, no-op).
             //
             // Keyed on slot (see below for why) and on whether this tile
             // currently matches a drop - not on the drop's identity, so a
             // later, different drop landing here still triggers this again
             // even though the key(item.id) block is the same.
-            val dropped = justDropped
-                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
             LaunchedEffect(slot, dropped != null) {
                 dropped?.let {
                     animatedOffset.snapTo(it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f))

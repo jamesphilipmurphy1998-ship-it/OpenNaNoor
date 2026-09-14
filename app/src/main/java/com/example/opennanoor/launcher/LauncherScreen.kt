@@ -918,37 +918,43 @@ private fun Dock(
             val thisLocation = HomeLocation.Dock(slot)
             val isDragOrigin = drag.active && drag.origin == thisLocation
 
-            // Seeded with the plain resting position - unkeyed beyond
-            // key(item.id) above, so this only ever runs once, when this
-            // app first appears in the dock at all.
+            // justDropped is plain composable state, safe to read at
+            // composition time.
+            val dropped = justDropped
+                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+
+            // Seeded with the plain resting position - except for the icon
+            // that was just released here, seeded instead at wherever its
+            // drag ghost actually was. fromPosition is in the shared outer
+            // frame the ghost is drawn in, but this icon's own x is local
+            // to the dock's left edge (localOrigin is that same translation
+            // dockBounds itself uses), and the ghost is centred on
+            // fromPosition while this icon is a fixed iconPx-wide box
+            // positioned by its left edge - both corrections are what
+            // HomePage's version does in one step for a page tile, which
+            // already lives in that outer frame the way a dock icon
+            // doesn't. Without this seed, a genuinely new arrival's very
+            // first frame rendered at its plain (final) position, one frame
+            // before the LaunchedEffect below got a chance to snap it back
+            // to the ghost's position and animate forward - a flash at the
+            // target immediately followed by a jump away from it. unkeyed
+            // beyond key(item.id) above, so this only ever runs once, the
+            // first time this app appears in the dock at all.
             val basePosition = remember {
-                Offset(restGapPx + slot * restPitchPx, 0f)
+                dropped?.let { Offset(it.fromPosition.x - localOrigin.x - iconPx / 2f, 0f) }
+                    ?: Offset(restGapPx + slot * restPitchPx, 0f)
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
 
-            // The icon that was just released here snaps to wherever its
-            // drag ghost actually was, before resuming normal tracking -
-            // justDropped is plain composable state, safe to read here.
-            // fromPosition is in the shared outer frame the ghost is drawn
-            // in, but this icon's own x is local to the dock's left edge
-            // (localOrigin is that same translation dockBounds itself
-            // uses), and the ghost is centred on fromPosition while this
-            // icon is a fixed iconPx-wide box positioned by its left edge -
-            // both corrections are what HomePage's version does in one step
-            // for a page tile, which already lives in that outer frame the
-            // way a dock icon doesn't.
-            //
-            // Can't be handled by seeding basePosition once at first
-            // composition: a REORDER drops an icon that was already in the
-            // dock, whose key(item.id) block has existed since before this
-            // drop - never a fresh composition remember{} could catch. Only
-            // a genuinely new arrival got seeded correctly that way; a
-            // same-dock reorder's icon - hidden but still being animated by
+            // The remember{} seed above only ever fires once ever, so it
+            // can't catch a REORDER: dropping an icon that was already in
+            // the dock, whose key(item.id) block has existed since before
+            // this drop. That icon was hidden but still being animated by
             // the live preview's own slot-based math the whole time, never
-            // actually tracking the real finger - just reappeared from
-            // wherever that left it, not from the ghost.
-            val dropped = justDropped
-                ?.takeIf { it.itemId == item.id && it.location == thisLocation }
+            // actually tracking the real finger - so it reappeared from
+            // wherever that left it, not from the ghost. This effect's own
+            // snapTo below catches that case; for a new arrival it just
+            // redundantly re-confirms the seed above (same value, no-op).
             // Keyed on slot, items.size, and now whether this tile currently
             // matches a drop (not the drop's identity, so a later different
             // drop landing here still retriggers this even though the
