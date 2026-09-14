@@ -798,17 +798,19 @@ fun LauncherScreen(
             // Explicit timing rather than AnimatedVisibility's own default
             // spring - that default settles in well under 100ms with a
             // slight overshoot, which read as a pop rather than a grow.
-            // 0.6 -> 1.0 over 220ms turned out to still be too subtle to
-            // actually see mid-drag, when the heavy per-frame work a drag
-            // already does (tracking the ghost, recomputing hover targets)
-            // competes for frames with this one - only the first and last
-            // frame were reliably landing, no visible in-between. Starting
-            // much smaller and running longer gives it far more frames to
-            // actually be caught on, even if some get dropped.
+            // The fade is almost instant on purpose - MINI_PREVIEW_FROM_SCALE
+            // already starts this at the same size and position as the
+            // closed tile it replaces (see that constant's own comment), so
+            // there's no gap to visually bridge with a fade; a slow one
+            // would just dim the "same object" illusion the size match is
+            // doing. The scale itself runs much longer, since a drag is
+            // already doing a lot of competing per-frame work and this
+            // needs enough time to land visible in-between frames rather
+            // than reading as a cut.
             enter = scaleIn(
                 initialScale = MINI_PREVIEW_FROM_SCALE,
                 animationSpec = tween(MINI_PREVIEW_OPEN_MS, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(MINI_PREVIEW_OPEN_MS / 3, easing = FastOutSlowInEasing)),
+            ) + fadeIn(animationSpec = tween(60)),
             exit = scaleOut(
                 targetScale = MINI_PREVIEW_FROM_SCALE,
                 animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing)
@@ -838,7 +840,7 @@ fun LauncherScreen(
 @Composable
 private fun FolderPreview(folder: HomeItem.FolderItem, centreOffsetPx: Offset, cellSizePx: Float) {
     val density = LocalDensity.current
-    val sizeDp = with(density) { (cellSizePx * 2.1f).toDp() }
+    val sizeDp = with(density) { (cellSizePx * MINI_PREVIEW_SIZE_MULTIPLIER).toDp() }
 
     Box(
         Modifier
@@ -1592,12 +1594,23 @@ private const val FOLDER_OPEN_FROM_SCALE = 0.5f
  * Timing for the small drag-hover fold preview specifically - not tied to
  * FOLDER_OPEN_MS/CLOSE_MS (the full folder view's own timing). A drag is
  * already doing a lot of per-frame work competing for frames, so this one
- * needs to be both slower and start from further away to have any real
- * chance of showing visible in-between frames rather than reading as a cut.
+ * needs to be slower to have any real chance of showing visible in-between
+ * frames rather than reading as a cut.
  */
 private const val MINI_PREVIEW_OPEN_MS = 380
 private const val MINI_PREVIEW_CLOSE_MS = 260
-private const val MINI_PREVIEW_FROM_SCALE = 0.2f
+
+/**
+ * How big the preview is relative to a plain cell - see FolderPreview's own
+ * sizeDp. The closed folder tile underneath is the same size as any other
+ * plain cell, so starting the preview's scaleIn at less than this fraction
+ * makes it launch from SMALLER than the icon it's replacing - an unrelated
+ * tiny thing appearing and growing, not that folder visibly expanding.
+ * Starting exactly here means the preview's first frame is the same size,
+ * in the same place, as the closed tile it replaces.
+ */
+private const val MINI_PREVIEW_SIZE_MULTIPLIER = 2.1f
+private const val MINI_PREVIEW_FROM_SCALE = 1f / MINI_PREVIEW_SIZE_MULTIPLIER
 
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
