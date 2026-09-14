@@ -56,6 +56,18 @@ fun HomePage(
     rows: Int,
     editing: Boolean,
     topPadding: Dp,
+    // Passed down rather than recomputed from this page's own
+    // BoxWithConstraints - that used to give this file its own,
+    // independent cell-size formula, which drifted from the one
+    // LauncherScreen uses to decide whether a drop offers folding.
+    // Same finger position, two disagreeing "which cell is this"
+    // answers - the fold offer and the actual tile displacement agreed
+    // with each other but not with what LauncherScreen armed, so some
+    // icons just slid aside instead of ever offering to merge. A single
+    // shared measurement removes the drift entirely.
+    cellWidthPx: Float,
+    cellHeightPx: Float,
+    topPaddingPx: Float,
     drag: DragCoordinator,
     /** Which page the pager is currently showing - only that page previews a
      *  drop. Read lazily inside layout, never during composition, since it
@@ -75,11 +87,11 @@ fun HomePage(
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
         val density = LocalDensity.current
-        val cellWidth = maxWidth / columns
-        val cellHeight = (maxHeight - topPadding) / rows
-        val cellWidthPx = with(density) { cellWidth.toPx() }
-        val cellHeightPx = with(density) { cellHeight.toPx() }
-        val topPaddingPx = with(density) { topPadding.toPx() }
+        // Dp forms for tile sizing, derived from the same shared px values
+        // everything else here uses - not measured independently, so they
+        // can't drift from them.
+        val cellWidth = with(density) { cellWidthPx.toDp() }
+        val cellHeight = with(density) { cellHeightPx.toDp() }
 
         items.forEachIndexed { slot, item ->
         // Wrapping each tile's whole body in key(item.id) - rather than
