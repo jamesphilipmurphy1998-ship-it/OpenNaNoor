@@ -503,8 +503,17 @@ internal fun pageDropTarget(
 // Widened from an earlier 0.3/0.7. A real finger can't hold still to the
 // pixel - natural tremor crossed that narrow a boundary often enough that
 // dwelling to fold felt inconsistent, each crossing resetting the timer.
-private const val FOLDER_ZONE_START = 0.2f
-private const val FOLDER_ZONE_END = 0.8f
+// Widened again from 0.2/0.8 - on-device logging of a real drag onto an
+// adjacent icon (see FoldDebug) showed the raw finger position peaking at
+// only ~13% into the neighbouring cell before the user, seeing the ghost
+// (nearly a full cell wide itself) already visually overlapping the
+// target, treated the drop as aimed and stopped pushing further right.
+// The hold zone was requiring a deeper, more deliberate push than the
+// natural "nudge onto your neighbour" gesture actually delivers, so folding
+// two adjacent icons together almost never armed - it just inserted next
+// to the target instead. 0.1 asks for less than a third of that.
+private const val FOLDER_ZONE_START = 0.1f
+private const val FOLDER_ZONE_END = 0.9f
 
 /** The small circled minus that takes an item off the home screen. */
 @Composable
