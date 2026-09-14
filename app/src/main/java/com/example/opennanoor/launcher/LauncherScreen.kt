@@ -176,7 +176,7 @@ fun LauncherScreen(
     // its plain grid position, so release continues the same motion instead
     // of cutting between two different renders of the same icon.
     var justDropped by remember { mutableStateOf<JustDropped?>(null) }
-    val topPadding = 16.dp + insets.calculateTopPadding()
+    val topPadding = 48.dp + insets.calculateTopPadding()
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     // The authoritative cell measurements, reported up by whichever
