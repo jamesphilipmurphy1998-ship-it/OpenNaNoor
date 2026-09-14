@@ -797,19 +797,22 @@ fun LauncherScreen(
             visible = armedFolder != null,
             // Explicit timing rather than AnimatedVisibility's own default
             // spring - that default settles in well under 100ms with a
-            // slight overshoot, which reads as a pop rather than a grow.
-            // Matched to FOLDER_OPEN_MS/FOLDER_CLOSE_MS so this mini
-            // preview grows open at the same speed the full folder view
-            // does, rather than two different-feeling animations for what
-            // is conceptually the same motion at two sizes.
+            // slight overshoot, which read as a pop rather than a grow.
+            // 0.6 -> 1.0 over 220ms turned out to still be too subtle to
+            // actually see mid-drag, when the heavy per-frame work a drag
+            // already does (tracking the ghost, recomputing hover targets)
+            // competes for frames with this one - only the first and last
+            // frame were reliably landing, no visible in-between. Starting
+            // much smaller and running longer gives it far more frames to
+            // actually be caught on, even if some get dropped.
             enter = scaleIn(
-                initialScale = 0.6f,
-                animationSpec = tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing)),
+                initialScale = MINI_PREVIEW_FROM_SCALE,
+                animationSpec = tween(MINI_PREVIEW_OPEN_MS, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(MINI_PREVIEW_OPEN_MS / 3, easing = FastOutSlowInEasing)),
             exit = scaleOut(
-                targetScale = 0.6f,
-                animationSpec = tween(FOLDER_CLOSE_MS, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(FOLDER_CLOSE_MS, easing = FastOutSlowInEasing))
+                targetScale = MINI_PREVIEW_FROM_SCALE,
+                animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing))
         ) {
             val folder = armedFolder
             val loc = drag.armedTarget as? HomeLocation.Page
@@ -1577,6 +1580,17 @@ private const val FOLDER_CLOSE_MS = 220
  * Starting noticeably smaller gives the eye something to actually track.
  */
 private const val FOLDER_OPEN_FROM_SCALE = 0.5f
+
+/**
+ * Timing for the small drag-hover fold preview specifically - not tied to
+ * FOLDER_OPEN_MS/CLOSE_MS (the full folder view's own timing). A drag is
+ * already doing a lot of per-frame work competing for frames, so this one
+ * needs to be both slower and start from further away to have any real
+ * chance of showing visible in-between frames rather than reading as a cut.
+ */
+private const val MINI_PREVIEW_OPEN_MS = 380
+private const val MINI_PREVIEW_CLOSE_MS = 260
+private const val MINI_PREVIEW_FROM_SCALE = 0.2f
 
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
