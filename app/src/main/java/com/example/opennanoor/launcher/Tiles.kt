@@ -43,17 +43,20 @@ internal const val ICON_PX = 192
 internal val DEFAULT_ICON_SIZE = 56.dp
 
 /**
- * Icon size for a dock holding [count] icons. 4 and 5 both use the same
- * DEFAULT_ICON_SIZE unscaled - 5 icons at the 4-icon size (packed tighter,
- * not smaller) is the actual look wanted, discovered by holding 5 icons in
- * the dock while set to 4, so this is a deliberate request rather than the
- * original shrink-to-fit design. 6 is the other way, smaller rather than
- * tighter-packed - scaled down from the 5-icon baseline the same
- * proportional way the original design scaled every count.
+ * Icon size for a dock holding [count] icons. 4 is its own distinct, larger
+ * size (DOCK_4_ICON_SIZE) rather than sharing DEFAULT_ICON_SIZE with 5 - 5
+ * is the baseline every other count is judged against, 4 stands out as
+ * bigger still since it's the sparsest the dock ever gets. 6 is the other
+ * way, scaled down from the 5-icon baseline the same proportional way the
+ * original design scaled every count.
  */
-internal fun dockIconSize(count: Int): Dp =
-    if (count <= DOCK_BASELINE_COUNT + 1) DEFAULT_ICON_SIZE
-    else DEFAULT_ICON_SIZE * (DOCK_BASELINE_COUNT + 1) / count
+internal fun dockIconSize(count: Int): Dp = when {
+    count <= DOCK_BASELINE_COUNT -> DOCK_4_ICON_SIZE
+    count == DOCK_BASELINE_COUNT + 1 -> DEFAULT_ICON_SIZE
+    else -> DEFAULT_ICON_SIZE * (DOCK_BASELINE_COUNT + 1) / count
+}
+
+private val DOCK_4_ICON_SIZE = 66.dp
 
 private const val DOCK_BASELINE_COUNT = 4
 
