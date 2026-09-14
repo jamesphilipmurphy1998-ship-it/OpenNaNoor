@@ -2,6 +2,7 @@ package com.example.opennanoor.launcher
 
 
 
+
 import android.content.ComponentName
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -807,12 +808,29 @@ fun LauncherScreen(
             // already doing a lot of competing per-frame work and this
             // needs enough time to land visible in-between frames rather
             // than reading as a cut.
+            // Anchored at the target cell's own top edge, not the box's
+            // centre (the default). The box is drawn far bigger than one
+            // cell (see MINI_PREVIEW_SIZE_MULTIPLIER), centred on the
+            // folder being hovered - scaling that from its own centre
+            // means the top edge balloons upward into the ROW ABOVE the
+            // folder as it grows, even though the box's centre never
+            // moves. On-device logging confirmed this: armedTarget was
+            // correctly the target folder throughout, but the growth was
+            // still seen starting from a different, unrelated app one row
+            // up - exactly what centre-anchored growth of an oversized box
+            // looks like. Anchoring at the target cell's own top edge
+            // (MINI_PREVIEW_ORIGIN_Y, a fixed fraction of the box's own
+            // height) means growth only ever extends downward and
+            // sideways from the folder's actual position - never upward
+            // past it.
             enter = scaleIn(
                 initialScale = MINI_PREVIEW_FROM_SCALE,
-                animationSpec = tween(MINI_PREVIEW_OPEN_MS, easing = FastOutSlowInEasing)
+                animationSpec = tween(MINI_PREVIEW_OPEN_MS, easing = FastOutSlowInEasing),
+                transformOrigin = TransformOrigin(0.5f, MINI_PREVIEW_ORIGIN_Y)
             ) + fadeIn(animationSpec = tween(60)),
             exit = scaleOut(
                 targetScale = MINI_PREVIEW_FROM_SCALE,
+                transformOrigin = TransformOrigin(0.5f, MINI_PREVIEW_ORIGIN_Y),
                 animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing)
             ) + fadeOut(animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing))
         ) {
@@ -1611,6 +1629,19 @@ private const val MINI_PREVIEW_CLOSE_MS = 260
  */
 private const val MINI_PREVIEW_SIZE_MULTIPLIER = 2.1f
 private const val MINI_PREVIEW_FROM_SCALE = 1f / MINI_PREVIEW_SIZE_MULTIPLIER
+
+/**
+ * Where the target cell's own top edge falls within the preview box's total
+ * height, as a fraction from the top - the box is centred on the target
+ * cell (see FolderPreview's own offset math: half its own height is
+ * MINI_PREVIEW_SIZE_MULTIPLIER/2 cells, the cell itself is 1 cell, so the
+ * cell's top sits (MINI_PREVIEW_SIZE_MULTIPLIER/2 - 0.5) cells down from the
+ * box's own top edge). Used as the scale animation's transformOrigin so
+ * growth is anchored there instead of the box's centre - see the comment on
+ * the AnimatedVisibility using it for why.
+ */
+private const val MINI_PREVIEW_ORIGIN_Y =
+    (MINI_PREVIEW_SIZE_MULTIPLIER / 2f - 0.5f) / MINI_PREVIEW_SIZE_MULTIPLIER
 
 private const val BLUR_RADIUS_PX = 45f
 private const val HOVER_DEBOUNCE_MS = 80L
