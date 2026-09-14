@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -85,7 +86,20 @@ internal fun HomeItemTile(
             .fillMaxWidth()
             .graphicsLayer { rotationZ = angle }
             .clip(RoundedCornerShape(12.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            // Explicit null indication - the default ripple otherwise
+            // covers this whole Column's rectangular bounds (the full
+            // tile cell, much wider than the icon itself) with a
+            // translucent highlight the instant you press down, before
+            // it's even decided whether this is a tap or a long-press
+            // drag. The icon graphic already gives its own visual
+            // feedback (the wobble/lift once a drag actually starts);
+            // this box doesn't need its own on top of that.
+            .combinedClickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .padding(vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
