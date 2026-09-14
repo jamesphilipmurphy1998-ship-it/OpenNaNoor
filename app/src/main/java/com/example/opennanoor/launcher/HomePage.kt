@@ -71,6 +71,20 @@ fun HomePage(
     onSpillAnimationDone: () -> Unit = {},
     /** Set only on the page an icon was just released onto - see [JustDropped]. */
     justDropped: JustDropped? = null,
+    // Reports this page's own real cell measurements upward, so
+    // LauncherScreen's own hover/drop-target math (deciding where a live
+    // preview lands, and whether it offers folding) can use the exact same
+    // numbers this page actually renders with, rather than a second,
+    // independent estimate of its own that can drift from this one by a
+    // pixel or two - enough for some icon positions to disagree on which
+    // cell a finger is over. Every page in the pager is the same size, so
+    // any one of them reporting is enough; this is deliberately NOT fed
+    // back into this file's own rendering below, which stays entirely
+    // self-contained - an earlier attempt to unify the two the other way
+    // (this file taking LauncherScreen's estimate instead) misaligned the
+    // actual tile grid, visible as icons sitting half a row off during
+    // wobble.
+    onMetrics: (cellWidthPx: Float, cellHeightPx: Float, topPaddingPx: Float) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -80,6 +94,10 @@ fun HomePage(
         val cellWidthPx = with(density) { cellWidth.toPx() }
         val cellHeightPx = with(density) { cellHeight.toPx() }
         val topPaddingPx = with(density) { topPadding.toPx() }
+
+        LaunchedEffect(cellWidthPx, cellHeightPx, topPaddingPx) {
+            onMetrics(cellWidthPx, cellHeightPx, topPaddingPx)
+        }
 
         items.forEachIndexed { slot, item ->
         // Wrapping each tile's whole body in key(item.id) - rather than

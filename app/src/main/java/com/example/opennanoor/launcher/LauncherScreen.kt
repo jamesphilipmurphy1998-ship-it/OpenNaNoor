@@ -177,6 +177,15 @@ fun LauncherScreen(
     val topPadding = 16.dp + insets.calculateTopPadding()
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    // The authoritative cell measurements, reported up by whichever
+    // HomePage last measured itself (see its onMetrics) - every page in the
+    // pager is the same size, so any one of them is representative. Used
+    // for this file's own hover/drop-target math so it can't drift from
+    // what HomePage actually renders; zero until the first page reports,
+    // same as pagerSizePx below.
+    var pageCellWidthPx by remember { mutableStateOf(0f) }
+    var pageCellHeightPx by remember { mutableStateOf(0f) }
+    var pageTopPaddingPx by remember { mutableStateOf(0f) }
 
     BoxWithConstraints(
         modifier
@@ -195,20 +204,23 @@ fun LauncherScreen(
             ) { if (editing) onEditingChange(false) }
     ) {
         val outerWidthPx = with(density) { maxWidth.toPx() }
-        val topPaddingPx = with(density) { topPadding.toPx() }
-        // Cell size is measured from the pager's own rendered area rather
-        // than recomputed from the outer box's total height, so the grid
-        // drop math lines up exactly with what HomePage actually draws -
-        // two independent formulas for the same thing drifted apart badly
-        // enough to misplace long drags toward the dock.
-        val cellWidthPx = if (pagerSizePx.width > 0) {
-            pagerSizePx.width / state.columns.toFloat()
-        } else with(density) { (maxWidth / state.columns).toPx() }
-        val cellHeightPx = if (pagerSizePx.height > 0) {
-            (pagerSizePx.height - topPaddingPx) / HomeLayout.ROWS_PER_PAGE.toFloat()
-        } else with(density) {
-            ((maxHeight - topPadding - DOCK_AREA_HEIGHT) / HomeLayout.ROWS_PER_PAGE).toPx()
-        }
+        // Cell size and top padding used for this file's own hover/drop
+        // math come straight from whichever HomePage last reported itself
+        // (see HomePage's onMetrics) - the exact numbers actually used to
+        // render the grid, not a second estimate of them. Falls back to a
+        // rough guess only until the first page reports, which happens
+        // before any drag is possible.
+        val topPaddingPx = if (pageTopPaddingPx > 0f) pageTopPaddingPx
+            else with(density) { topPadding.toPx() }
+        val cellWidthPx = if (pageCellWidthPx > 0f) pageCellWidthPx
+            else if (pagerSizePx.width > 0) pagerSizePx.width / state.columns.toFloat()
+            else with(density) { (maxWidth / state.columns).toPx() }
+        val cellHeightPx = if (pageCellHeightPx > 0f) pageCellHeightPx
+            else if (pagerSizePx.height > 0) {
+                (pagerSizePx.height - topPaddingPx) / HomeLayout.ROWS_PER_PAGE.toFloat()
+            } else with(density) {
+                ((maxHeight - topPadding - DOCK_AREA_HEIGHT) / HomeLayout.ROWS_PER_PAGE).toPx()
+            }
 
         fun handleDragMoved(delta: Offset) {
             drag.moveBy(delta)
@@ -560,7 +572,12 @@ fun LauncherScreen(
                     onRemove = { slot -> onRemove(pageIndex, slot) },
                     spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
                     onSpillAnimationDone = onSpillAnimationDone,
-                    justDropped = justDropped?.takeIf { it.location is HomeLocation.Page && it.location.page == pageIndex }
+                    justDropped = justDropped?.takeIf { it.location is HomeLocation.Page && it.location.page == pageIndex },
+                    onMetrics = { w, h, t ->
+                        pageCellWidthPx = w
+                        pageCellHeightPx = h
+                        pageTopPaddingPx = t
+                    }
                 )
             }
 
