@@ -37,8 +37,8 @@ data class HomeLayout(
          * A first-run layout: common apps in the dock, everything else paged in
          * alphabetical order. Roughly what a phone looks like out of the box.
          */
-        fun default(apps: List<LaunchableApp>, columns: Int): HomeLayout {
-            val perPage = columns * ROWS_PER_PAGE
+        fun default(apps: List<LaunchableApp>, columns: Int, rows: Int = ROWS_PER_PAGE): HomeLayout {
+            val perPage = columns * rows
 
             val dock = DOCK_PREFERENCES
                 .mapNotNull { hint ->

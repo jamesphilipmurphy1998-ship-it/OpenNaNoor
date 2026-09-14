@@ -43,15 +43,18 @@ internal const val ICON_PX = 192
 internal val DEFAULT_ICON_SIZE = 56.dp
 
 /**
- * Icon size for a dock holding [count] icons. 4 is its own distinct, larger
- * size (DOCK_4_ICON_SIZE) rather than sharing DEFAULT_ICON_SIZE with 5 - 5
- * is the baseline every other count is judged against, 4 stands out as
- * bigger still since it's the sparsest the dock ever gets. 6 is the other
- * way, scaled down from the 5-icon baseline the same proportional way the
- * original design scaled every count.
+ * Icon size for a dock holding [count] icons. 1-3 match the page grid's own
+ * 4-column size (PAGE_4_ICON_SIZE) - sparse enough in the dock that they
+ * read the same as a sparse page. 4 is its own distinct, larger size
+ * (DOCK_4_ICON_SIZE) rather than sharing DEFAULT_ICON_SIZE with 5 - 5 is the
+ * baseline every other count is judged against, 4 stands out as bigger
+ * still since it's the sparsest count the dock scales on its own terms for.
+ * 6 is the other way, scaled down from the 5-icon baseline the same
+ * proportional way the original design scaled every count.
  */
 internal fun dockIconSize(count: Int): Dp = when {
-    count <= DOCK_BASELINE_COUNT -> DOCK_4_ICON_SIZE
+    count in 1..3 -> PAGE_4_ICON_SIZE
+    count == DOCK_BASELINE_COUNT -> DOCK_4_ICON_SIZE
     count == DOCK_BASELINE_COUNT + 1 -> DEFAULT_ICON_SIZE
     else -> DEFAULT_ICON_SIZE * (DOCK_BASELINE_COUNT + 1) / count
 }
@@ -59,6 +62,66 @@ internal fun dockIconSize(count: Int): Dp = when {
 private val DOCK_4_ICON_SIZE = 66.dp
 
 private const val DOCK_BASELINE_COUNT = 4
+
+/**
+ * Icon size for a home page tile whose cell measures [cellWidth] x
+ * [cellHeight], on a grid of [columns] x [rows].
+ *
+ * Driven by [columns] alone, not by [rows] too - a phone has far more
+ * vertical room to spare than horizontal, so the same "+2" on rows as on
+ * columns is nowhere near as tight a squeeze. Sizing off the smaller of a
+ * columns-scale and a rows-scale (as this used to) let a tall-but-narrow
+ * grid like 3x6 shrink icons that had plenty of horizontal room to stay
+ * their full size, just because rows had grown past its own baseline.
+ * Rows still gets a say, but only as a fit check afterwards, not as a
+ * second driver of how small the icon should read as.
+ *
+ * Two constraints:
+ *
+ * - A density target, scaled from DEFAULT_ICON_SIZE by how far [columns]
+ *   sits past the 4-column baseline - the "more icons in a row means a
+ *   smaller icon" behaviour itself.
+ * - A measured fit budget, straight from the cell's own real on-screen
+ *   size rather than the counts that produced it, covering both axes so
+ *   the icon can never overflow into a neighbour on either one - this is
+ *   what still catches an extreme row count even though rows no longer
+ *   drives the target directly.
+ *
+ * Whichever constraint is smaller wins. Never grows past DEFAULT_ICON_SIZE
+ * - only the dock has its own distinct larger size for being sparse; a
+ * page just gets more breathing room.
+ */
+internal fun pageIconSize(columns: Int, cellWidth: Dp, cellHeight: Dp): Dp {
+    val widthBudget = (cellWidth * 0.82f).coerceAtLeast(0.dp)
+    val heightBudget = ((cellHeight - PAGE_LABEL_RESERVE) * 0.9f).coerceAtLeast(0.dp)
+    // PAGE_ICON_MIN_SIZE lifts only the density target, a floor on how far
+    // "more icons means smaller icons" scaling shrinks it - it must never
+    // lift the final result past what widthBudget/heightBudget actually
+    // measured, or an extreme enough combination on a small enough screen
+    // could make this function hand back an icon bigger than its own cell.
+    val densityTarget = maxOf(pageDensityTarget(columns), PAGE_ICON_MIN_SIZE)
+    return minOf(widthBudget, heightBudget, densityTarget)
+}
+
+/**
+ * The "more icons in a row means a smaller icon" target size for [columns]
+ * icons per row, tuned by hand per count (the same shape as [dockIconSize])
+ * rather than derived from one continuous formula - so each count's size can
+ * be adjusted on its own without the others moving too.
+ */
+private fun pageDensityTarget(columns: Int): Dp = when (columns) {
+    1, 2, 3, PAGE_BASELINE_COLUMNS -> PAGE_4_ICON_SIZE
+    5 -> PAGE_5_ICON_SIZE
+    else -> DEFAULT_ICON_SIZE * (PAGE_BASELINE_COLUMNS.toFloat() / columns).coerceAtMost(1f)
+}
+
+private val PAGE_4_ICON_SIZE = 68.dp
+private val PAGE_5_ICON_SIZE = 68.dp
+
+/** Roughly the label's own text line plus the tile Column's vertical padding. */
+private val PAGE_LABEL_RESERVE = 26.dp
+private val PAGE_ICON_MIN_SIZE = 24.dp
+private const val PAGE_BASELINE_COLUMNS = 4
 
 /**
  * One tile: an app's icon, or a folder's small 2x2 preview of its contents.

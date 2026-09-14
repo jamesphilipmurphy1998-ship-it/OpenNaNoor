@@ -31,6 +31,16 @@ sealed class HomeLocation {
  */
 data class SpillEvent(val item: HomeItem, val fromPage: Int)
 
+/**
+ * How many icons one page holds for a [columns] x [rows] grid - the single
+ * formula every page-capacity decision (chunking icons into pages, rejecting
+ * an insert that would overflow one) is computed from, so they can't drift
+ * out of sync with each other the way two separately-written copies of
+ * "columns * rows" could. Floored at 1 so a page can never be asked to hold
+ * zero icons even if columns or rows somehow came out as 0.
+ */
+internal fun pageCapacity(columns: Int, rows: Int): Int = (columns * rows).coerceAtLeast(1)
+
 data class LauncherUiState(
     val pages: List<List<HomeItem>> = emptyList(),
     val dock: List<HomeItem> = emptyList(),
@@ -39,6 +49,7 @@ data class LauncherUiState(
     val activePack: String? = null,
     val iosStyle: Boolean = false,
     val columns: Int = 4,
+    val rows: Int = HomeLayout.ROWS_PER_PAGE,
     val dockIconCount: Int = 4,
     val openFolderId: String? = null,
     val spillEvent: SpillEvent? = null,
@@ -78,6 +89,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             val packChoice = settings.iconPackPackage
             val ios = settings.iosIconStyle
             val columns = settings.columns
+            val rows = settings.rows
             val dockIconCount = settings.dockIconCount
 
             val result = withContext(Dispatchers.IO) {
@@ -110,7 +122,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 }
 
                 val layout = HomeLayout.load(context, byComponent.keys)
-                    ?: HomeLayout.default(apps, columns).also { HomeLayout.save(context, it) }
+                    ?: HomeLayout.default(apps, columns, rows).also { HomeLayout.save(context, it) }
 
                 val resolvedPages = layout.pages.map { page -> page.mapNotNull(::resolve) }
                 val resolvedDock = layout.dock.mapNotNull(::resolve)
@@ -125,10 +137,17 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }.toSet()
                 val unplaced = apps.map { it.component }.filterNot { it in placed }
-                val pages = resolvedPages + unplaced
-                    .mapNotNull { icons[it] }
-                    .chunked(columns * HomeLayout.ROWS_PER_PAGE)
-                    .filter { it.isNotEmpty() }
+                // Every icon (the saved pages' own, plus anything unplaced)
+                // is rechunked to the CURRENT columns/rows here, not just
+                // appended in new-sized chunks after old, differently-sized
+                // saved pages - a saved layout from before the page layout
+                // setting last changed would otherwise keep showing its old
+                // per-page count until a resume that also happens to reflow
+                // it (see refreshSettingsIfChanged), which doesn't always
+                // fire on the very next resume (e.g. one where packChanged
+                // is also true takes the full-refresh path instead).
+                val pages = (resolvedPages.flatten() + unplaced.mapNotNull { icons[it] })
+                    .chunked(pageCapacity(columns, rows))
 
                 Loaded(
                     pages = pages.ifEmpty { listOf(emptyList()) },
@@ -146,6 +165,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 activePack = packChoice.takeIf { result.packActive },
                 iosStyle = ios,
                 columns = columns,
+                rows = rows,
                 dockIconCount = dockIconCount,
                 openFolderId = _state.value.openFolderId,
                 loading = false
@@ -177,13 +197,31 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshSettingsIfChanged() {
         val packChanged = settings.iconPackPackage != _state.value.activePack
         val iosChanged = settings.iosIconStyle != _state.value.iosStyle
-        if (packChanged || iosChanged) {
-            refresh()
-        } else {
-            _state.value = _state.value.copy(
-                columns = settings.columns,
-                dockIconCount = settings.dockIconCount
-            )
+        val current = _state.value
+        val newColumns = settings.columns
+        val newRows = settings.rows
+        val layoutChanged = newColumns != current.columns || newRows != current.rows
+        when {
+            packChanged || iosChanged -> refresh()
+            layoutChanged -> {
+                // A smaller grid can't hold as many icons per page as before -
+                // reflow every icon (folders kept whole) into pages sized for
+                // the new capacity, in the same order they were already in,
+                // rather than letting a shrunk page silently overflow or a
+                // grown one leave gaps that used to be filled by icons pushed
+                // onto the next page.
+                val reflowed = current.pages.flatten()
+                    .chunked(pageCapacity(newColumns, newRows))
+                    .ifEmpty { listOf(emptyList()) }
+                _state.value = current.copy(
+                    pages = reflowed,
+                    columns = newColumns,
+                    rows = newRows,
+                    dockIconCount = settings.dockIconCount
+                )
+                persist(reflowed, current.dock)
+            }
+            else -> _state.value = current.copy(dockIconCount = settings.dockIconCount)
         }
     }
 
@@ -217,7 +255,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val spillEvent = insertItem(
-            sourceItem, to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold
+            sourceItem, to, pagesWorking, dockWorking, current.columns, current.rows, current.dockIconCount, fold
         )
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
@@ -279,10 +317,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         pagesWorking: MutableList<MutableList<HomeItem>>,
         dockWorking: MutableList<HomeItem>,
         columns: Int,
+        rows: Int,
         dockCapacity: Int,
         fold: Boolean
     ): SpillEvent? {
-        val capacity = columns * HomeLayout.ROWS_PER_PAGE
+        val capacity = pageCapacity(columns, rows)
 
         // A folder is never a drop destination in its own right - dropping
         // onto a folder is resolved below by finding it as the occupant of a
@@ -408,7 +447,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
         val spillEvent = insertItem(
-            HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.dockIconCount, fold
+            HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.rows, current.dockIconCount, fold
         )
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
@@ -421,7 +460,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val current = _state.value
         if (current.contains(entry.app.component)) return
 
-        val capacity = current.columns * HomeLayout.ROWS_PER_PAGE
+        val capacity = pageCapacity(current.columns, current.rows)
         val target = current.pages.indexOfFirst { it.size < capacity }
         val destination = if (target >= 0) {
             HomeLocation.Page(target, current.pages[target].size)

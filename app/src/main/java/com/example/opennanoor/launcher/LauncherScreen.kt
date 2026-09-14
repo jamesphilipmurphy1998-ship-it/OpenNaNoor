@@ -90,6 +90,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
@@ -99,6 +100,10 @@ import kotlinx.coroutines.launch
 @Composable
 fun LauncherScreen(
     state: LauncherUiState,
+    // See the call site's own comment (LauncherActivity) for why a dock
+    // capacity decision at drop time can't just trust this composable's own
+    // `state` parameter.
+    currentDockIconCount: () -> Int = { state.dockIconCount },
     onLaunchApp: (LaunchableApp) -> Unit,
     onOpenSettings: () -> Unit,
     drawerOpen: Boolean,
@@ -218,9 +223,9 @@ fun LauncherScreen(
             else with(density) { (maxWidth / state.columns).toPx() }
         val cellHeightPx = if (pageCellHeightPx > 0f) pageCellHeightPx
             else if (pagerSizePx.height > 0) {
-                (pagerSizePx.height - topPaddingPx) / HomeLayout.ROWS_PER_PAGE.toFloat()
+                (pagerSizePx.height - topPaddingPx) / state.rows.toFloat()
             } else with(density) {
-                ((maxHeight - topPadding - DOCK_AREA_HEIGHT) / HomeLayout.ROWS_PER_PAGE).toPx()
+                ((maxHeight - topPadding - DOCK_AREA_HEIGHT) / state.rows).toPx()
             }
 
         fun handleDragMoved(delta: Offset) {
@@ -329,6 +334,16 @@ fun LauncherScreen(
         fun stillOnOriginDockSlot(origin: HomeLocation.Dock): Boolean {
             val bounds = dockBounds
             if (bounds == null || bounds.width <= 0f) return false
+            // dockDropTarget below only resolves an X coordinate against the
+            // dock's own horizontal pitch - it has no idea whether the
+            // finger is anywhere near the dock vertically. Without this,
+            // lifting the finger well above the dock (clearly dragging the
+            // icon out onto a page) could still land on the origin slot's X
+            // range and read as "never moved", snapping the icon straight
+            // back to the dock even though it visibly left it. overDock
+            // already tracks the true "is the finger over the dock right
+            // now" check (see its own assignment), so trust that first.
+            if (!drag.overDock) return false
             val iconPx = with(density) { dockIconSize(state.dockIconCount).toPx() }
             val n = (state.dock.size - 1).coerceAtLeast(1)
             val gapPx = ((bounds.width - iconPx * n) / (n + 1)).coerceAtLeast(0f)
@@ -345,6 +360,15 @@ fun LauncherScreen(
             // mid-animation when the finger lifts, and cancelling would
             // strand the pager half-scrolled between two pages instead of
             // letting the flip it already committed to finish landing.
+            // A dock-icon-count change made on the settings screen only
+            // reaches this composable's own `state` on its next
+            // recomposition - which may not have happened yet by the time a
+            // drag that started before it finishes. Reading it fresh here
+            // (see currentDockIconCount's own comment at the call site)
+            // means a drop decided the instant a setting changes still sees
+            // the true current capacity instead of whatever this gesture's
+            // stale snapshot still says.
+            val dockIconCountNow = currentDockIconCount()
             val item = drag.item
             if (item != null) {
                 val dragOrigin = drag.origin
@@ -384,7 +408,7 @@ fun LauncherScreen(
                             } else {
                                 itemCount + 1
                             }
-                            val iconPx = with(density) { dockIconSize(state.dockIconCount).toPx() }
+                            val iconPx = with(density) { dockIconSize(dockIconCountNow).toPx() }
                             val n = packingCount.coerceAtLeast(1)
                             val gapPx = ((bounds.width - iconPx * n) / (n + 1)).coerceAtLeast(0f)
                             val pitchPx = iconPx + gapPx
@@ -446,7 +470,7 @@ fun LauncherScreen(
                 // than needing a slot of its own.
                 val dockFull = target is HomeLocation.Dock &&
                     origin !is HomeLocation.Dock &&
-                    state.dock.size >= state.dockIconCount &&
+                    state.dock.size >= dockIconCountNow &&
                     !fold
 
                 if (target is HomeLocation.Dock) {
@@ -595,29 +619,42 @@ fun LauncherScreen(
                         }
                     }
             ) { pageIndex ->
-                HomePage(
-                    items = state.pages.getOrNull(pageIndex).orEmpty(),
-                    pageIndex = pageIndex,
-                    columns = state.columns,
-                    rows = HomeLayout.ROWS_PER_PAGE,
-                    editing = editing,
-                    topPadding = topPadding,
-                    drag = drag,
-                    currentPage = { pagerState.currentPage },
-                    onLaunch = ::handleTap,
-                    onEnterEditing = { onEditingChange(true) },
-                    onDragMoved = ::handleDragMoved,
-                    onDragEnded = ::handleDragEnded,
-                    onRemove = { slot -> onRemove(pageIndex, slot) },
-                    spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
-                    onSpillAnimationDone = onSpillAnimationDone,
-                    justDropped = justDropped?.takeIf { it.location is HomeLocation.Page && it.location.page == pageIndex },
-                    onMetrics = { w, h, t ->
-                        pageCellWidthPx = w
-                        pageCellHeightPx = h
-                        pageTopPaddingPx = t
-                    }
-                )
+                // Keyed on columns/rows so a live page-layout change fully
+                // discards and rebuilds every page's composition, including
+                // ones currently off-screen (kept composed only so a live
+                // drag survives a page scroll - see beyondViewportPageCount
+                // above). Without this, an off-screen page's own
+                // BoxWithConstraints had already run once under the OLD
+                // columns/rows and didn't reliably pick up the new values
+                // through plain recomposition alone - it kept rendering its
+                // old grid, with the tail of it sitting off the right edge
+                // of the screen, until the whole process was killed and
+                // relaunched.
+                key(state.columns, state.rows) {
+                    HomePage(
+                        items = state.pages.getOrNull(pageIndex).orEmpty(),
+                        pageIndex = pageIndex,
+                        columns = state.columns,
+                        rows = state.rows,
+                        editing = editing,
+                        topPadding = topPadding,
+                        drag = drag,
+                        currentPage = { pagerState.currentPage },
+                        onLaunch = ::handleTap,
+                        onEnterEditing = { onEditingChange(true) },
+                        onDragMoved = ::handleDragMoved,
+                        onDragEnded = ::handleDragEnded,
+                        onRemove = { slot -> onRemove(pageIndex, slot) },
+                        spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
+                        onSpillAnimationDone = onSpillAnimationDone,
+                        justDropped = justDropped?.takeIf { it.location is HomeLocation.Page && it.location.page == pageIndex },
+                        onMetrics = { w, h, t ->
+                            pageCellWidthPx = w
+                            pageCellHeightPx = h
+                            pageTopPaddingPx = t
+                        }
+                    )
+                }
             }
 
             PageDots(
@@ -755,7 +792,15 @@ fun LauncherScreen(
         // had an active raw pointer-input gesture running - and that seems to
         // be enough for Compose to cancel the gesture outright: onDragCancel
         // was firing within ~15ms of onDragStart, before any real movement.
-        DragGhost(drag = drag)
+        DragGhost(
+            drag = drag,
+            pageIconSize = pageIconSize(
+                state.columns,
+                with(density) { cellWidthPx.toDp() },
+                with(density) { cellHeightPx.toDp() }
+            ),
+            dockIconSize = dockIconSize(state.dockIconCount)
+        )
 
         // The folder someone is dwelling on to drop into expands into a
         // real 2x2 preview of what's inside, the way iOS shows it - rather
@@ -920,7 +965,19 @@ private fun FolderPreview(
  * movement, which Compose answered by cancelling the drag.
  */
 @Composable
-private fun DragGhost(drag: DragCoordinator) {
+private fun DragGhost(drag: DragCoordinator, pageIconSize: Dp, dockIconSize: Dp) {
+    // Reading drag.overDock here, in a LaunchedEffect key, is the same
+    // pattern the mini fold-preview already uses for drag.armedTarget -
+    // safe because DragGhost is its own composable, entirely separate from
+    // whichever tile deep in the pager or dock has the actual live gesture
+    // running, so recomposing this one doesn't touch that tile's own
+    // pointerInput the way reading drag state during a TILE's own
+    // composition would.
+    val animatedIconSize = remember { Animatable(pageIconSize.value) }
+    LaunchedEffect(drag.overDock, pageIconSize, dockIconSize) {
+        val target = if (drag.overDock) dockIconSize.value else pageIconSize.value
+        animatedIconSize.animateTo(target, tween(GHOST_RESIZE_MS))
+    }
     Box(
         Modifier
             // drag.position is now the actual touch point, not a tile's
@@ -946,9 +1003,14 @@ private fun DragGhost(drag: DragCoordinator) {
                 scaleY = GHOST_SCALE
             }
     ) {
-        drag.item?.let { HomeItemTile(item = it, onClick = {}) }
+        drag.item?.let {
+            HomeItemTile(item = it, onClick = {}, iconSize = animatedIconSize.value.dp)
+        }
     }
 }
+
+/** How long the ghost takes to resize once it crosses into/out of the dock. */
+private const val GHOST_RESIZE_MS = 150
 
 @Composable
 private fun RemoveZone(highlighted: Boolean, onPositioned: (Rect) -> Unit) {

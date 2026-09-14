@@ -18,9 +18,15 @@ class Settings(context: Context) {
         get() = prefs.getBoolean(KEY_IOS_STYLE, false)
         set(value) = prefs.edit { putBoolean(KEY_IOS_STYLE, value) }
 
+    /** How many columns a home page's grid is divided into, 1-6. */
     var columns: Int
         get() = prefs.getInt(KEY_COLUMNS, 4)
-        set(value) = prefs.edit { putInt(KEY_COLUMNS, value.coerceIn(3, 6)) }
+        set(value) = prefs.edit { putInt(KEY_COLUMNS, value.coerceIn(1, 6)) }
+
+    /** How many rows a home page's grid is divided into, 1-6. */
+    var rows: Int
+        get() = prefs.getInt(KEY_ROWS, 5)
+        set(value) = prefs.edit { putInt(KEY_ROWS, value.coerceIn(1, 6)) }
 
     /**
      * How many icons the dock fits, 1-6. Unrelated to the page grid's own
@@ -39,6 +45,7 @@ class Settings(context: Context) {
     private companion object {
         const val KEY_ICON_PACK = "icon_pack"
         const val KEY_COLUMNS = "columns"
+        const val KEY_ROWS = "rows"
         const val KEY_IOS_STYLE = "ios_icon_style"
         const val KEY_DOCK_COUNT = "dock_icon_count"
     }

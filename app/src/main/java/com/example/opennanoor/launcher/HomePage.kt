@@ -94,6 +94,7 @@ fun HomePage(
         val cellWidthPx = with(density) { cellWidth.toPx() }
         val cellHeightPx = with(density) { cellHeight.toPx() }
         val topPaddingPx = with(density) { topPadding.toPx() }
+        val iconSize = pageIconSize(columns, cellWidth, cellHeight)
 
         LaunchedEffect(cellWidthPx, cellHeightPx, topPaddingPx) {
             onMetrics(cellWidthPx, cellHeightPx, topPaddingPx)
@@ -139,7 +140,7 @@ fun HomePage(
                 // last column of its own row instead keeps the live preview
                 // and the actual departure animation showing the same
                 // direction throughout the whole gesture.
-                val capacity = columns * rows
+                val capacity = pageCapacity(columns, rows)
                 if (display >= capacity) {
                     val lastRow = (capacity - 1) / columns
                     return Offset(
@@ -309,7 +310,8 @@ fun HomePage(
                             if (item is HomeItem.FolderItem || !editing) onLaunch(item)
                         },
                         wobble = editing,
-                        wobbleSeed = slot
+                        wobbleSeed = slot,
+                        iconSize = iconSize
                     )
                 }
                 if (editing) {
@@ -329,7 +331,7 @@ fun HomePage(
         // its neighbour, then fading out. It plays once and reports back so
         // the event doesn't linger and replay on the next unrelated drop.
         if (spillEvent != null) {
-            val capacity = columns * rows
+            val capacity = pageCapacity(columns, rows)
             val lastSlot = capacity - 1
             // Starts exactly where the live preview left the icon, NOT at
             // the last cell. (lastSlot % columns) is columns-1 - one whole
@@ -371,7 +373,7 @@ fun HomePage(
                     .graphicsLayer { alpha = ghostAlpha.value },
                 contentAlignment = Alignment.Center
             ) {
-                HomeItemTile(item = spillEvent.item, onClick = {})
+                HomeItemTile(item = spillEvent.item, onClick = {}, iconSize = iconSize)
             }
         }
     }

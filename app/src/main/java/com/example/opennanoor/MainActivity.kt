@@ -88,6 +88,8 @@ class MainActivity : ComponentActivity() {
                     isDefaultHome = remember(epoch) { Permissions.isDefaultHome(context) },
                     dockIconCount = remember(epoch) { settings.dockIconCount },
                     dockAppCount = remember(epoch) { HomeLayout.dockSize(context) },
+                    pageColumns = remember(epoch) { settings.columns },
+                    pageRows = remember(epoch) { settings.rows },
                     onSelectPack = { pack ->
                         settings.iconPackPackage = pack
                         epoch++
@@ -95,6 +97,14 @@ class MainActivity : ComponentActivity() {
                     onOpenHomeSettings = { startActivity(Permissions.homeAppSettingsIntent()) },
                     onSetDockIconCount = { count ->
                         settings.dockIconCount = count
+                        epoch++
+                    },
+                    onSetPageColumns = { count ->
+                        settings.columns = count
+                        epoch++
+                    },
+                    onSetPageRows = { count ->
+                        settings.rows = count
                         epoch++
                     },
                     onToggle = { feature, on ->

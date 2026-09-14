@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import com.example.opennanoor.core.Feature
 import com.example.opennanoor.core.Requirement
 import com.example.opennanoor.launcher.IconPackInfo
+import kotlin.math.roundToInt
 
 data class FeatureState(
     val feature: Feature,
@@ -54,11 +55,15 @@ fun HomeScreen(
     isDefaultHome: Boolean,
     dockIconCount: Int,
     dockAppCount: Int,
+    pageColumns: Int,
+    pageRows: Int,
     onToggle: (Feature, Boolean) -> Unit,
     onGrant: (Requirement) -> Unit,
     onSelectPack: (String?) -> Unit,
     onOpenHomeSettings: () -> Unit,
     onSetDockIconCount: (Int) -> Unit,
+    onSetPageColumns: (Int) -> Unit,
+    onSetPageRows: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Scaffold(
@@ -106,6 +111,15 @@ fun HomeScreen(
                     count = dockIconCount,
                     dockAppCount = dockAppCount,
                     onChange = onSetDockIconCount
+                )
+            }
+
+            item {
+                PageLayoutCard(
+                    columns = pageColumns,
+                    rows = pageRows,
+                    onChangeColumns = onSetPageColumns,
+                    onChangeRows = onSetPageRows
                 )
             }
 
@@ -233,7 +247,7 @@ private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> 
             Spacer(Modifier.height(4.dp))
             Slider(
                 value = sliderValue,
-                onValueChange = { sliderValue = it },
+                onValueChange = { sliderValue = it.roundToInt().toFloat().coerceIn(1f, 6f) },
                 onValueChangeFinished = {
                     val target = sliderValue.toInt()
                     if (target < dockAppCount) {
@@ -246,19 +260,7 @@ private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> 
                 valueRange = 1f..6f,
                 steps = 4
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                (1..6).forEach { n ->
-                    Text(
-                        text = "$n",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (n == count) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outline
-                        }
-                    )
-                }
-            }
+            PageLayoutScale(selected = sliderValue.toInt())
         }
     }
 
@@ -278,6 +280,74 @@ private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> 
                 TextButton(onClick = { pendingRemoval = null }) { Text("Got it") }
             }
         )
+    }
+}
+
+/** How many columns and rows a home page's grid is divided into, 1-6 each. */
+@Composable
+private fun PageLayoutCard(
+    columns: Int,
+    rows: Int,
+    onChangeColumns: (Int) -> Unit,
+    onChangeRows: (Int) -> Unit
+) {
+    var columnsValue by remember(columns) { mutableFloatStateOf(columns.toFloat()) }
+    var rowsValue by remember(rows) { mutableFloatStateOf(rows.toFloat()) }
+
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Page layout", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "${columnsValue.toInt()} x ${rowsValue.toInt()} icons per home page.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
+            Slider(
+                value = columnsValue,
+                onValueChange = { columnsValue = it.roundToInt().toFloat().coerceIn(1f, 6f) },
+                onValueChangeFinished = { onChangeColumns(columnsValue.toInt()) },
+                valueRange = 1f..6f,
+                steps = 4
+            )
+            PageLayoutScale(selected = columnsValue.toInt())
+            Spacer(Modifier.height(8.dp))
+            Slider(
+                value = rowsValue,
+                onValueChange = { rowsValue = it.roundToInt().toFloat().coerceIn(1f, 6f) },
+                onValueChangeFinished = { onChangeRows(rowsValue.toInt()) },
+                valueRange = 1f..6f,
+                steps = 4
+            )
+            PageLayoutScale(selected = rowsValue.toInt())
+        }
+    }
+}
+
+@Composable
+private fun PageLayoutScale(selected: Int) {
+    // Lines up with where the Slider's own thumb actually stops for each
+    // step - its track is inset from the full width by the thumb's own
+    // radius at both ends, so an unpadded SpaceBetween row would drift out
+    // from under the thumb by that same amount at 1 and 6.
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        (1..6).forEach { n ->
+            Text(
+                text = "$n",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (n == selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outline
+                }
+            )
+        }
     }
 }
 

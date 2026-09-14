@@ -69,6 +69,23 @@ class LauncherActivity : ComponentActivity() {
 
                 LauncherScreen(
                     state = state,
+                    // A settings change (dock icon count) made on the other
+                    // screen only reaches this ViewModel's own `state` on
+                    // the next resume (see refreshSettingsIfChanged above) -
+                    // fine for rendering, which just waits for that next
+                    // recomposition, but a capacity decision made right at
+                    // drop time needs the true current value THIS SAME
+                    // instant. Reading straight from SharedPreferences here
+                    // is a cheap, synchronous, side-effect-free way to get
+                    // that - calling vm.refreshSettingsIfChanged() instead
+                    // (an earlier version of this) ran a full state refresh
+                    // on every drag end, not just ones headed for the dock,
+                    // and raced with the move a plain page-to-page or
+                    // dock-to-page drag was already making: the refresh's
+                    // reload of the last SAVED layout could land after
+                    // onMove and silently undo it, which looked like the
+                    // dragged icon snapping back to where it started.
+                    currentDockIconCount = { com.example.opennanoor.core.Settings(this).dockIconCount },
                     onLaunchApp = { AppRepository.launch(this, it.component) },
                     onOpenSettings = { openSettings() },
                     drawerOpen = drawerOpen,
