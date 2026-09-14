@@ -240,10 +240,18 @@ fun LauncherScreen(
             // already sitting at x=0, inside the edge strip before the
             // finger had moved at all, flipping the page the instant it was
             // picked up.
+            // "Over the edge" means any part of the ghost, not just its
+            // centre - so the trigger strip is half the ghost's own width,
+            // not an arbitrary margin. EDGE_MARGIN_PX used to be a flat 28
+            // raw pixels, which is a sliver a few dp wide on a real phone's
+            // density - the centre could never get that close before the
+            // finger ran off the edge of the screen entirely. That's why
+            // this never fired.
+            val ghostHalfPx = with(density) { GHOST_SIZE.toPx() } / 2f
             val side = when {
                 drag.overDock || drag.overRemoveZone -> 0
-                center.x < EDGE_MARGIN_PX && pagerState.currentPage > 0 -> -1
-                center.x > outerWidthPx - EDGE_MARGIN_PX && pagerState.currentPage < pageCount - 1 -> 1
+                center.x - ghostHalfPx < 0f && pagerState.currentPage > 0 -> -1
+                center.x + ghostHalfPx > outerWidthPx && pagerState.currentPage < pageCount - 1 -> 1
                 else -> 0
             }
             val now = System.currentTimeMillis()
@@ -1430,7 +1438,6 @@ private fun Modifier.pointerInputIf(
 ): Modifier = if (condition) this.pointerInput(condition, block) else this
 
 private const val DRAWER_DRAG_THRESHOLD = 18f
-private const val EDGE_MARGIN_PX = 28f
 private const val EDGE_HOLD_MS = 1000L
 // How long a drag has to rest over an icon before its folder preview opens
 // and a drop there would merge rather than insert.
