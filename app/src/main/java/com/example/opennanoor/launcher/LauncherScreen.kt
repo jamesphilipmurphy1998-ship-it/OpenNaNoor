@@ -262,11 +262,45 @@ fun LauncherScreen(
             }
         }
 
+        // Dropped with no real movement at all - still resting on the exact
+        // cell/slot it was lifted from. The normal resolution below computes
+        // an index against a same-page/same-dock list that has the origin
+        // conceptually removed already, so a same-page or same-dock drop
+        // that lands anywhere past that cell's own midpoint resolves to
+        // "insert after" whichever neighbour shifted into the gap - a swap
+        // with that neighbour, rather than simply placing this one straight
+        // back where it was. Bypassing the maths entirely for this one case
+        // and resolving straight to the origin is the only way "no movement"
+        // reliably means "no change", regardless of which half of the
+        // original cell the finger happened to be resting on.
+        fun stillOnOriginPageCell(origin: HomeLocation.Page): Boolean {
+            if (origin.page != pagerState.currentPage) return false
+            val column = (drag.position.x / cellWidthPx).toInt().coerceIn(0, state.columns - 1)
+            val row = ((drag.position.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
+            return row * state.columns + column == origin.slot
+        }
+
+        fun stillOnOriginDockSlot(origin: HomeLocation.Dock): Boolean {
+            val bounds = dockBounds
+            if (bounds == null || bounds.width <= 0f) return false
+            val iconPx = with(density) { dockIconSize(state.dockIconCount).toPx() }
+            val n = (state.dock.size - 1).coerceAtLeast(1)
+            val gapPx = ((bounds.width - iconPx * n) / (n + 1)).coerceAtLeast(0f)
+            val pitchPx = iconPx + gapPx
+            val hovered = dockDropTarget(
+                drag.position.x - bounds.left - gapPx, pitchPx, state.dock.size - 1
+            )
+            return hovered == origin.slot
+        }
+
         fun handleDragEnded() {
             edgeHoldSide = 0
             val item = drag.item
             if (item != null) {
+                val dragOrigin = drag.origin
                 val target: HomeLocation = when {
+                    dragOrigin is HomeLocation.Page && stillOnOriginPageCell(dragOrigin) -> dragOrigin
+                    dragOrigin is HomeLocation.Dock && stillOnOriginDockSlot(dragOrigin) -> dragOrigin
                     drag.overDock -> {
                         val bounds = dockBounds
                         val dockSlot = if (bounds != null && bounds.width > 0f) {
