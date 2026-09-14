@@ -143,13 +143,13 @@ private fun AppIcon(item: HomeItem.AppItem, size: Dp) {
 // of pixel shader work for something this small. A diagonal light-to-dark
 // gradient plus a brighter top-left border edge reads as glass at this size
 // without any of that cost.
-private val folderGlassBrush = Brush.linearGradient(
+internal val folderGlassBrush = Brush.linearGradient(
     colors = listOf(
         Color.White.copy(alpha = 0.32f),
         Color.White.copy(alpha = 0.10f)
     )
 )
-private val folderGlassBorderBrush = Brush.linearGradient(
+internal val folderGlassBorderBrush = Brush.linearGradient(
     colors = listOf(
         Color.White.copy(alpha = 0.55f),
         Color.White.copy(alpha = 0.05f)

@@ -18,6 +18,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -773,7 +774,8 @@ private fun FolderPreview(folder: HomeItem.FolderItem, centreOffsetPx: Offset, c
             }
             .size(sizeDp)
             .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xFF2C2C2E))
+            .background(folderGlassBrush)
+            .border(1.dp, folderGlassBorderBrush, RoundedCornerShape(24.dp))
             .padding(12.dp)
     ) {
         LazyVerticalGrid(
