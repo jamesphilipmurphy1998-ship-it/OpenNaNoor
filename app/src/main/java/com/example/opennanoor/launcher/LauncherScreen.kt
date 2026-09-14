@@ -90,6 +90,7 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -154,6 +155,12 @@ fun LauncherScreen(
     // somewhere else doesn't trigger it.
     var edgeHoldSide by remember { mutableIntStateOf(0) }
     var edgeHoldSince by remember { mutableLongStateOf(0L) }
+    // The in-flight page-flip animation, if any - held onto so a second
+    // flip (finger still resting in the edge strip a second later) cancels
+    // the first rather than running alongside it. Two overlapping
+    // animateScrollToPage calls were what made the page "jolt": each one
+    // restarts the scroll from wherever the other had gotten to.
+    var edgeFlipJob by remember { mutableStateOf<Job?>(null) }
     var dockBounds by remember { mutableStateOf<Rect?>(null) }
     var removeZoneBounds by remember { mutableStateOf<Rect?>(null) }
     var outerOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -263,9 +270,11 @@ fun LauncherScreen(
                 // frame - holding through the flip requires dwelling the
                 // full second again before it repeats.
                 edgeHoldSince = now
-                when (side) {
+                edgeFlipJob?.cancel()
+                edgeFlipJob = when (side) {
                     -1 -> scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
                     1 -> scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                    else -> null
                 }
             }
         }
@@ -303,6 +312,10 @@ fun LauncherScreen(
 
         fun handleDragEnded() {
             edgeHoldSide = 0
+            // Not cancelling edgeFlipJob here on purpose - it may already be
+            // mid-animation when the finger lifts, and cancelling would
+            // strand the pager half-scrolled between two pages instead of
+            // letting the flip it already committed to finish landing.
             val item = drag.item
             if (item != null) {
                 val dragOrigin = drag.origin
@@ -502,6 +515,19 @@ fun LauncherScreen(
             // alone without needing to be switched off by hand.
             HorizontalPager(
                 state = pagerState,
+                // Default (0) only composes the current page plus whatever
+                // the scroll is actively animating through - a tile the
+                // finger picked up lives inside a pointerInput keyed to its
+                // own page, and once that page scrolls far enough to be
+                // dropped from composition, its coroutine is torn down mid-
+                // gesture (onDragCancel fires) and the icon drops wherever
+                // it happened to be hovering. Keeping every page composed
+                // is the fix - a handful of icon grids is cheap to hold in
+                // memory, and it's a plain constant (not reactive to
+                // drag.active) since toggling a Pager param like this
+                // mid-gesture is itself what used to cancel drags (see the
+                // userScrollEnabled note below).
+                beyondViewportPageCount = (pageCount - 1).coerceAtLeast(0),
                 modifier = Modifier
                     .weight(1f)
                     .onGloballyPositioned { pagerSizePx = it.size }
