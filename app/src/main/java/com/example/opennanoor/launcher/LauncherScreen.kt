@@ -174,6 +174,17 @@ fun LauncherScreen(
         modifier
             .fillMaxSize()
             .onGloballyPositioned { outerOrigin = it.positionInWindow() }
+            // The bottom-most layer everything else sits on top of - an
+            // icon's own clickable/pointerInput consumes a tap that lands
+            // on it before this ever sees it, the same way the settings
+            // corner and the Done button already do, so this only ever
+            // fires for a tap that hit neither: empty page space, dock
+            // background, between the page dots. One tap there is enough
+            // to leave arranging mode, same as Done.
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() }
+            ) { if (editing) onEditingChange(false) }
     ) {
         val outerWidthPx = with(density) { maxWidth.toPx() }
         val topPaddingPx = with(density) { topPadding.toPx() }
