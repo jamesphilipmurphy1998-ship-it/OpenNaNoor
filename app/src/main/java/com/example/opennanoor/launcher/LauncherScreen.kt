@@ -795,8 +795,21 @@ fun LauncherScreen(
 
         AnimatedVisibility(
             visible = armedFolder != null,
-            enter = scaleIn(initialScale = 0.6f) + fadeIn(),
-            exit = scaleOut(targetScale = 0.6f) + fadeOut()
+            // Explicit timing rather than AnimatedVisibility's own default
+            // spring - that default settles in well under 100ms with a
+            // slight overshoot, which reads as a pop rather than a grow.
+            // Matched to FOLDER_OPEN_MS/FOLDER_CLOSE_MS so this mini
+            // preview grows open at the same speed the full folder view
+            // does, rather than two different-feeling animations for what
+            // is conceptually the same motion at two sizes.
+            enter = scaleIn(
+                initialScale = 0.6f,
+                animationSpec = tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing)
+            ) + fadeIn(animationSpec = tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing)),
+            exit = scaleOut(
+                targetScale = 0.6f,
+                animationSpec = tween(FOLDER_CLOSE_MS, easing = FastOutSlowInEasing)
+            ) + fadeOut(animationSpec = tween(FOLDER_CLOSE_MS, easing = FastOutSlowInEasing))
         ) {
             val folder = armedFolder
             val loc = drag.armedTarget as? HomeLocation.Page
