@@ -26,9 +26,11 @@ class Settings(context: Context) {
      * How many icons the dock fits, 1-6. Unrelated to the page grid's own
      * columns setting - the dock's own outer size never changes, only how
      * many (and so how large) icons it divides that space into. 4 is the
-     * size this app shipped with; other counts scale from it. 6 is a
-     * size-preview only for now - LauncherViewModel still caps how many
-     * apps the dock will actually hold at 5 until a real 6th slot is built.
+     * size this app shipped with; other counts scale from it. 6 is fully
+     * wired up now, same as 4 and 5 - a change here only reaches the
+     * running launcher once it resumes (see refreshSettingsIfChanged),
+     * not instantly, so a drop attempted before then can still see the
+     * old count.
      */
     var dockIconCount: Int
         get() = prefs.getInt(KEY_DOCK_COUNT, 4)

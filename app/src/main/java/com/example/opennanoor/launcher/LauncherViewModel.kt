@@ -138,7 +138,6 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     packActive = pack != null
                 )
             }
-
             _state.value = LauncherUiState(
                 pages = result.pages,
                 dock = result.dock,
@@ -311,7 +310,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         // silently pushing the last icon past dockCapacity where Dock's
         // repeat(slotCount) never draws it again - an icon would vanish and
         // the drop would look like it failed.
-        if (destination is HomeLocation.Dock && dockWorking.size >= dockCapacity) return null
+        if (destination is HomeLocation.Dock && dockWorking.size >= dockCapacity) {
+            return null
+        }
+        if (destination is HomeLocation.Dock) {
+        }
 
         val targetList = listFor(destination) ?: pagesWorking.lastOrNull() ?: run {
             pagesWorking.add(mutableListOf(item))

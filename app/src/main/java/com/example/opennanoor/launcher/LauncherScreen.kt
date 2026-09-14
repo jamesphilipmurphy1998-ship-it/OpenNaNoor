@@ -449,6 +449,9 @@ fun LauncherScreen(
                     state.dock.size >= state.dockIconCount &&
                     !fold
 
+                if (target is HomeLocation.Dock) {
+                }
+
                 if (dockFull) {
                     // Ping back to where it came from, then let go - the
                     // ghost is still what's on screen (drag.item stays set
