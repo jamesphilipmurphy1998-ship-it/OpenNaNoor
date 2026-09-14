@@ -3,6 +3,7 @@ package com.example.opennanoor.launcher
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -135,14 +137,35 @@ private fun AppIcon(item: HomeItem.AppItem, size: Dp) {
     )
 }
 
+// iOS's "Liquid Glass" look, faked with a gradient + edge highlight rather
+// than a real blur-behind - a genuine backdrop blur would mean re-rendering
+// whatever sits under every folder tile in a whole page grid, which is a lot
+// of pixel shader work for something this small. A diagonal light-to-dark
+// gradient plus a brighter top-left border edge reads as glass at this size
+// without any of that cost.
+private val folderGlassBrush = Brush.linearGradient(
+    colors = listOf(
+        Color.White.copy(alpha = 0.32f),
+        Color.White.copy(alpha = 0.10f)
+    )
+)
+private val folderGlassBorderBrush = Brush.linearGradient(
+    colors = listOf(
+        Color.White.copy(alpha = 0.55f),
+        Color.White.copy(alpha = 0.05f)
+    )
+)
+
 /** A rounded tile holding up to four of the folder's icons in a 2x2 grid. */
 @Composable
 private fun FolderIcon(item: HomeItem.FolderItem, size: Dp) {
+    val shape = RoundedCornerShape(14.dp)
     Box(
         modifier = Modifier
             .size(size)
-            .clip(RoundedCornerShape(14.dp))
-            .background(Color.White.copy(alpha = 0.18f))
+            .clip(shape)
+            .background(folderGlassBrush)
+            .border(1.dp, folderGlassBorderBrush, shape)
             .padding(6.dp)
     ) {
         LazyVerticalGrid(
