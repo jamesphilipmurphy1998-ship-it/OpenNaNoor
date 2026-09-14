@@ -37,9 +37,23 @@ class DragCoordinator {
     /**
      * True once the finger has rested over [hoverTarget] long enough that
      * releasing there should merge into a folder rather than push the other
-     * icons aside. Cleared whenever the finger moves to a different slot.
+     * icons aside. Cleared whenever the finger moves to a genuinely
+     * different slot (see [armedTarget]).
      */
     var folderArmed by mutableStateOf(false)
+
+    /**
+     * Which slot [folderArmed] was armed for, kept even through a momentary
+     * flicker of [hoverTarget] back to null - on-device logging showed a
+     * finger that had held rock-steady through the whole dwell would almost
+     * always twitch by a frame or two right as the fold preview popped in
+     * (a startle at the very feedback that confirmed it had worked), and
+     * clearing folderArmed on that alone meant the drop, moments later,
+     * read as un-armed even though the finger never actually left the
+     * target. Only hovering a different real slot - not a blip back to
+     * nothing - should cancel an armed fold.
+     */
+    var armedTarget by mutableStateOf<HomeLocation?>(null)
 
     val active: Boolean get() = item != null
 
@@ -52,6 +66,7 @@ class DragCoordinator {
         this.position = startPosition
         this.hoverTarget = null
         this.folderArmed = false
+        this.armedTarget = null
     }
 
     fun moveBy(delta: Offset) {
@@ -65,5 +80,6 @@ class DragCoordinator {
         overRemoveZone = false
         hoverTarget = null
         folderArmed = false
+        armedTarget = null
     }
 }

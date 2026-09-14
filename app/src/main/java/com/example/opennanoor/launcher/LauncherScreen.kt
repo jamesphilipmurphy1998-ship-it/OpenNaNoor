@@ -1,6 +1,7 @@
 package com.example.opennanoor.launcher
 
 
+
 import android.content.ComponentName
 import android.graphics.RenderEffect
 import android.graphics.Shader
@@ -236,20 +237,35 @@ fun LauncherScreen(
             drag.overRemoveZone = editing && removeZoneBounds?.contains(center) == true
 
             // Track the folder, if any, the finger is resting over. Only a
-            // hold zone (the centre of a folder's cell - see pageDropTarget)
+            // hold zone (the centre of a folder's cell - see pageFoldTarget)
             // arms the fold timer; hovering near either edge of that same
-            // cell previews an insert instead, and neither dwells.
+            // cell previews an insert instead, and neither dwells. Checked
+            // against the page's real, unshifted layout via pageFoldTarget,
+            // not pageDropTarget's own holdTarget - see pageFoldTarget's
+            // own comment for why the shifted list it computes against
+            // (right for reflow, used a few lines down in handleDragEnded's
+            // insert path) identifies the wrong occupant once a same-page
+            // drag has left its own cell.
             val hovered = if (drag.overDock || drag.overRemoveZone) null else {
-                pageItemsForPreview(state, pagerState.currentPage, drag.origin)?.let { pageItems ->
-                    val target = pageDropTarget(
-                        drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns, pageItems
-                    )
-                    target.holdTarget?.let { HomeLocation.Page(pagerState.currentPage, it) }
+                state.pages.getOrNull(pagerState.currentPage)?.let { pageItems ->
+                    val originSlot = (drag.origin as? HomeLocation.Page)
+                        ?.takeIf { it.page == pagerState.currentPage }?.slot
+                    pageFoldTarget(
+                        drag.position, cellWidthPx, cellHeightPx, topPaddingPx, state.columns, pageItems, originSlot
+                    )?.let { HomeLocation.Page(pagerState.currentPage, it) }
                 }
             }
             if (hovered != drag.hoverTarget) {
                 drag.hoverTarget = hovered
-                drag.folderArmed = false
+                // A momentary flicker back to null - a real finger held
+                // rock-steady through a whole dwell would still twitch a
+                // frame right as the fold preview popped in, seeing that as
+                // confirmation and easing off before actually releasing -
+                // doesn't cancel an already-armed fold. Only hovering a
+                // genuinely different real slot does.
+                if (hovered != null && hovered != drag.armedTarget) {
+                    drag.folderArmed = false
+                }
             }
 
             // Dragging out of the drawer reveals the home screen underneath it
@@ -382,6 +398,20 @@ fun LauncherScreen(
                         drag.end()
                         return
                     }
+                    // An already-armed fold lands on the slot it armed for,
+                    // full stop - not a target re-derived from wherever the
+                    // finger happens to be at the exact instant it lifts.
+                    // Re-checking the fold zone fresh at release (the
+                    // previous version of this) meant a sub-pixel drift in
+                    // the moment between arming and actually letting go -
+                    // completely normal, a finger is never perfectly still
+                    // - could miss the zone by then and silently fall back
+                    // to a plain insert, even though drag.folderArmed was
+                    // still true: on-device logging caught this exact case,
+                    // armed for one slot, the drop resolving to its
+                    // neighbour instead. armedTarget already recorded
+                    // which slot the dwell actually committed to; trust it.
+                    drag.folderArmed && drag.armedTarget is HomeLocation.Page -> drag.armedTarget!!
                     else -> {
                         val pageItems = pageItemsForPreview(state, pagerState.currentPage, drag.origin)
                             .orEmpty()
@@ -392,14 +422,19 @@ fun LauncherScreen(
                     }
                 }
 
-                // Only a drop that dwelled over this exact slot folds into it.
-                // The dock never merges into a folder (see dockDropTarget's
-                // own comment on this) - drag.hoverTarget is only ever set
-                // from a page's own hold-zone, so it can never legitimately
-                // equal a Dock target already, but excluding Dock here
-                // explicitly means that isn't something a future change to
-                // the hover logic could accidentally reintroduce.
-                val fold = drag.folderArmed && drag.hoverTarget == target && target !is HomeLocation.Dock
+                // Only a drop that dwelled over this exact slot folds into
+                // it - checked against armedTarget, not the live
+                // hoverTarget, since a last-instant flicker back to null
+                // (see DragCoordinator.armedTarget) shouldn't read as
+                // un-armed here just because the finger let go a frame
+                // after twitching off it. The dock never merges into a
+                // folder (see dockDropTarget's own comment on this) -
+                // armedTarget is only ever set from a page's own
+                // hold-zone, so it can never legitimately equal a Dock
+                // target already, but excluding Dock here explicitly means
+                // that isn't something a future change to the hover logic
+                // could accidentally reintroduce.
+                val fold = drag.folderArmed && drag.armedTarget == target && target !is HomeLocation.Dock
                 val origin = drag.origin
 
                 // A full dock rejects this drop outright (see insertItem) -
@@ -485,6 +520,7 @@ fun LauncherScreen(
                 .collectLatest { target ->
                     if (target != null) {
                         kotlinx.coroutines.delay(FOLDER_DWELL_MS)
+                        drag.armedTarget = target
                         drag.folderArmed = true
                     }
                 }
@@ -740,7 +776,7 @@ fun LauncherScreen(
         // already settled - handleDragMoved un-arms on every hover change,
         // so by construction it can't move again while still armed.
         val armedFolder = if (drag.folderArmed) {
-            (drag.hoverTarget as? HomeLocation.Page)
+            (drag.armedTarget as? HomeLocation.Page)
                 ?.takeIf { it.page == pagerState.currentPage }
                 ?.let { loc ->
                     val occupant = pageItemsForPreview(state, loc.page, null)?.getOrNull(loc.slot)
@@ -763,7 +799,7 @@ fun LauncherScreen(
             exit = scaleOut(targetScale = 0.6f) + fadeOut()
         ) {
             val folder = armedFolder
-            val loc = drag.hoverTarget as? HomeLocation.Page
+            val loc = drag.armedTarget as? HomeLocation.Page
             if (folder != null && loc != null) {
                 val centreX = (loc.slot % state.columns) * cellWidthPx + cellWidthPx / 2f
                 val centreY = topPaddingPx + (loc.slot / state.columns) * cellHeightPx + cellHeightPx / 2f

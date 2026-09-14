@@ -294,7 +294,7 @@ fun HomePage(
                             // app about to become one (the preview now
                             // covers both).
                             val isExpanded = drag.folderArmed &&
-                                drag.hoverTarget == thisLocation
+                                drag.armedTarget == thisLocation
                             alpha = if (isOrigin || isExpanded) 0f else 1f
                         },
                     contentAlignment = Alignment.Center
@@ -418,6 +418,26 @@ private fun displacedSlot(
         val row = ((drag.position.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
         if (row * columns + column == origin.slot) return slot
 
+        // Whether this hover offers a fold is checked against the page's
+        // real, unshifted layout (see pageFoldTarget) - not against the
+        // shifted list the reflow below uses, which would identify the
+        // wrong icon as the occupant of the cell the finger is actually
+        // over. While it does, nothing reflows at all - every tile
+        // (the fold target included) holds its own true slot. Without
+        // this, the instant the finger left its origin cell heading toward
+        // an adjacent icon, that icon would already have slid one cell
+        // over to close the gap - sliding INTO roughly where the finger
+        // started, then away from it again as the finger kept moving. The
+        // target was never still long enough under the finger to arm a
+        // fold; it read as the drag just shoving the neighbour aside
+        // instead. A fold doesn't remove a slot from the sequence (two
+        // items still end up sharing one slot), so nothing should move
+        // preemptively on its account the way an insert's gap does.
+        if (pageFoldTarget(
+                drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items, origin.slot
+            ) != null
+        ) return slot
+
         // Carried elsewhere on this page: the item is conceptually already
         // gone from its old spot, and a gap opens at the hover point.
         val withoutDragged = if (slot > origin.slot) slot - 1 else slot
@@ -428,11 +448,14 @@ private fun displacedSlot(
         settle(withoutDragged, target)
     } else {
         // Arriving from elsewhere (another page, the dock, a folder, or the
-        // drawer): nothing has left this page, so a gap simply opens.
+        // drawer): nothing has left this page, so a gap simply opens. No
+        // shift/exclusion needed - this page's own list is already the
+        // real, unshifted one, so pageDropTarget's own holdTarget already
+        // agrees with pageFoldTarget here.
         val target = pageDropTarget(
             drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items
         )
-        settle(slot, target)
+        if (target.holdTarget != null) slot else settle(slot, target)
     }
 }
 
@@ -498,6 +521,41 @@ internal fun pageDropTarget(
     val gap = if (withinCell < 0.5f) cellIndex else cellIndex + 1
     val holdTarget = if (withinCell in FOLDER_ZONE_START..FOLDER_ZONE_END) cellIndex else null
     return PageDropTarget(gap = gap, holdTarget = holdTarget)
+}
+
+/**
+ * Which slot (if any) is currently offering a fold, checked directly
+ * against the page's real, unshifted layout - deliberately NOT
+ * [pageDropTarget]'s own [PageDropTarget.holdTarget], which is computed
+ * against a list with the drag's origin already conceptually removed (so
+ * reflow math lines up for an actual insert). That's the wrong list for
+ * deciding whether to fold, once a same-page drag no longer collapses its
+ * own gap the instant it leaves - it treats whichever icon has shifted into
+ * the origin's old spot as the occupant of the cell the finger is really
+ * over, which by the time the finger reaches the true neighbour is a
+ * different icon than the one visibly sitting there. Checked on-device
+ * (logcat): this mismatch was what made a fold target's own identity flip
+ * or vanish mid-hover instead of settling once the finger actually reached
+ * it. [excludeSlot] is the drag's own origin slot on this page, if any - a
+ * finger still over its own lifted icon's cell can't fold onto itself.
+ */
+internal fun pageFoldTarget(
+    position: Offset,
+    cellWidthPx: Float,
+    cellHeightPx: Float,
+    topPaddingPx: Float,
+    columns: Int,
+    items: List<HomeItem>,
+    excludeSlot: Int?
+): Int? {
+    if (cellWidthPx <= 0f || cellHeightPx <= 0f) return null
+    val column = (position.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
+    val row = ((position.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
+    val cellIndex = row * columns + column
+    if (cellIndex == excludeSlot) return null
+    items.getOrNull(cellIndex) ?: return null
+    val withinCell = ((position.x - column * cellWidthPx) / cellWidthPx).coerceIn(0f, 1f)
+    return if (withinCell in FOLDER_ZONE_START..FOLDER_ZONE_END) cellIndex else null
 }
 
 // Widened from an earlier 0.3/0.7. A real finger can't hold still to the
