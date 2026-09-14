@@ -1393,6 +1393,15 @@ private fun FolderOverlay(
                 }
                 .padding(top = 48.dp + insets.calculateTopPadding())
                 .padding(horizontal = 24.dp)
+                // A visible panel edge to grow, rather than just the title
+                // and icon grid scaling in place with nothing marking their
+                // own boundary - without this the scrim behind (already at
+                // full size and darkness from the first frame) gave the eye
+                // nothing to anchor the growth to, so the icons read as
+                // zooming in isolation rather than one panel expanding.
+                .clip(RoundedCornerShape(28.dp))
+                .background(Color.White.copy(alpha = if (dimmed) 0f else 0.08f))
+                .padding(20.dp)
         ) {
             Text(
                 text = folder.name,
