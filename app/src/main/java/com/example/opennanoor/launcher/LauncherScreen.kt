@@ -14,8 +14,6 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -794,57 +792,51 @@ fun LauncherScreen(
                 }
         } else null
 
-        AnimatedVisibility(
-            visible = armedFolder != null,
-            // Explicit timing rather than AnimatedVisibility's own default
-            // spring - that default settles in well under 100ms with a
-            // slight overshoot, which read as a pop rather than a grow.
-            // The fade is almost instant on purpose - MINI_PREVIEW_FROM_SCALE
-            // already starts this at the same size and position as the
-            // closed tile it replaces (see that constant's own comment), so
-            // there's no gap to visually bridge with a fade; a slow one
-            // would just dim the "same object" illusion the size match is
-            // doing. The scale itself runs much longer, since a drag is
-            // already doing a lot of competing per-frame work and this
-            // needs enough time to land visible in-between frames rather
-            // than reading as a cut.
-            // Anchored at the target cell's own top edge, not the box's
-            // centre (the default). The box is drawn far bigger than one
-            // cell (see MINI_PREVIEW_SIZE_MULTIPLIER), centred on the
-            // folder being hovered - scaling that from its own centre
-            // means the top edge balloons upward into the ROW ABOVE the
-            // folder as it grows, even though the box's centre never
-            // moves. On-device logging confirmed this: armedTarget was
-            // correctly the target folder throughout, but the growth was
-            // still seen starting from a different, unrelated app one row
-            // up - exactly what centre-anchored growth of an oversized box
-            // looks like. Anchoring at the target cell's own top edge
-            // (MINI_PREVIEW_ORIGIN_Y, a fixed fraction of the box's own
-            // height) means growth only ever extends downward and
-            // sideways from the folder's actual position - never upward
-            // past it.
-            enter = scaleIn(
-                initialScale = MINI_PREVIEW_FROM_SCALE,
-                animationSpec = tween(MINI_PREVIEW_OPEN_MS, easing = FastOutSlowInEasing),
-                transformOrigin = TransformOrigin(0.5f, MINI_PREVIEW_ORIGIN_Y)
-            ) + fadeIn(animationSpec = tween(60)),
-            exit = scaleOut(
-                targetScale = MINI_PREVIEW_FROM_SCALE,
-                transformOrigin = TransformOrigin(0.5f, MINI_PREVIEW_ORIGIN_Y),
-                animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing))
-        ) {
+        // Rebuilt from scratch on a plain, self-driven Animatable - the
+        // same proven mechanism FolderOverlay's own "appear" already uses
+        // to grow the full folder view open - rather than
+        // AnimatedVisibility, whose enter/exit transitions went through
+        // several rounds of tuning (timing, start scale, transformOrigin)
+        // without ever visibly changing what actually showed on the
+        // device. Full manual control here means every part of this -
+        // when it starts, what scale it starts at, where it's anchored -
+        // is a plain value read directly off this Animatable, nothing
+        // hidden inside a transition API.
+        //
+        // The folder+location is retained across the moment armedFolder
+        // goes back to null (finger moved off, or the drop just
+        // happened) so there's still something on screen to animate
+        // closed, the same way FolderOverlay retains its own folder
+        // through dismissAnimated.
+        var retainedPreview by remember {
+            mutableStateOf<Pair<HomeItem.FolderItem, HomeLocation.Page>?>(null)
+        }
+        val previewAppear = remember { Animatable(0f) }
+        LaunchedEffect(armedFolder, drag.armedTarget) {
             val folder = armedFolder
             val loc = drag.armedTarget as? HomeLocation.Page
             if (folder != null && loc != null) {
-                val centreX = (loc.slot % state.columns) * cellWidthPx + cellWidthPx / 2f
-                val centreY = topPaddingPx + (loc.slot / state.columns) * cellHeightPx + cellHeightPx / 2f
-                FolderPreview(
-                    folder = folder,
-                    centreOffsetPx = Offset(centreX, centreY),
-                    cellSizePx = cellWidthPx
+                retainedPreview = folder to loc
+                previewAppear.snapTo(MINI_PREVIEW_FROM_SCALE)
+                previewAppear.animateTo(1f, tween(MINI_PREVIEW_OPEN_MS, easing = FastOutSlowInEasing))
+            } else if (retainedPreview != null) {
+                previewAppear.animateTo(
+                    MINI_PREVIEW_FROM_SCALE,
+                    tween(MINI_PREVIEW_CLOSE_MS, easing = FastOutSlowInEasing)
                 )
+                retainedPreview = null
             }
+        }
+
+        retainedPreview?.let { (folder, loc) ->
+            val centreX = (loc.slot % state.columns) * cellWidthPx + cellWidthPx / 2f
+            val centreY = topPaddingPx + (loc.slot / state.columns) * cellHeightPx + cellHeightPx / 2f
+            FolderPreview(
+                folder = folder,
+                centreOffsetPx = Offset(centreX, centreY),
+                cellSizePx = cellWidthPx,
+                appear = { previewAppear.value }
+            )
         }
     }
 }
@@ -854,9 +846,19 @@ fun LauncherScreen(
  * grid - grown to roughly twice a normal tile's size and centred on the
  * folder being dwelled over. Dropping while this is showing merges into the
  * same folder it shows; it isn't just decoration standing in for that.
+ *
+ * [appear] is read lazily inside the graphicsLayer draw lambda, the same
+ * reason drag position/ghost placement elsewhere in this file are - so this
+ * animating every frame invalidates only this box's own layer, not a
+ * recomposition of the screen around it.
  */
 @Composable
-private fun FolderPreview(folder: HomeItem.FolderItem, centreOffsetPx: Offset, cellSizePx: Float) {
+private fun FolderPreview(
+    folder: HomeItem.FolderItem,
+    centreOffsetPx: Offset,
+    cellSizePx: Float,
+    appear: () -> Float
+) {
     val density = LocalDensity.current
     val sizeDp = with(density) { (cellSizePx * MINI_PREVIEW_SIZE_MULTIPLIER).toDp() }
 
@@ -869,6 +871,24 @@ private fun FolderPreview(folder: HomeItem.FolderItem, centreOffsetPx: Offset, c
                 )
             }
             .size(sizeDp)
+            .graphicsLayer {
+                val scale = appear()
+                scaleX = scale
+                scaleY = scale
+                // Anchored at the target cell's own top edge, not the
+                // box's centre (graphicsLayer's own default). This box is
+                // drawn far bigger than one cell (see
+                // MINI_PREVIEW_SIZE_MULTIPLIER), centred on the folder
+                // being hovered - scaling that from its own centre means
+                // the top edge balloons upward into the ROW ABOVE the
+                // folder as it grows, even though the box's centre never
+                // moves. Anchoring at the target cell's own top edge
+                // (MINI_PREVIEW_ORIGIN_Y, a fixed fraction of the box's
+                // own height) means growth only ever extends downward and
+                // sideways from the folder's actual position - never
+                // upward past it.
+                transformOrigin = TransformOrigin(0.5f, MINI_PREVIEW_ORIGIN_Y)
+            }
             .clip(RoundedCornerShape(24.dp))
             .background(folderGlassBrush)
             .border(1.dp, folderGlassBorderBrush, RoundedCornerShape(24.dp))
