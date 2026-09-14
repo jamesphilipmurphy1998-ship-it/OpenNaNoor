@@ -296,20 +296,22 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         val destination = to
 
+        // The dock never merges into a folder - unlike a page, where
+        // dwelling over an occupied cell offers to fold into it, the dock
+        // only ever reorders (see dockDropTarget's own comment on this).
+        // fold is ignored outright for a Dock destination rather than only
+        // at the call site, so this function can't be made to create a
+        // dock folder no matter what a future caller passes it.
+        val fold = fold && destination !is HomeLocation.Dock
+
         // Unlike a full page, a full dock has nowhere to spill over to - its
-        // own outer size is fixed by dockCapacity. Without this guard, a
-        // non-merging drop onto a full dock still inserted, silently pushing
-        // the last icon past dockCapacity where Dock's repeat(slotCount)
-        // never draws it again - an icon would vanish and the drop would
-        // look like it failed.
-        if (destination is HomeLocation.Dock && dockWorking.size >= dockCapacity) {
-            val occupant = dockWorking.getOrNull(destination.slot.coerceIn(0, dockWorking.lastIndex))
-            val willMerge = fold && (
-                occupant is HomeItem.FolderItem && item is HomeItem.AppItem ||
-                    occupant is HomeItem.AppItem && item is HomeItem.AppItem && occupant != item
-                )
-            if (!willMerge) return null
-        }
+        // own outer size is fixed by dockCapacity, and since it never
+        // merges either, a full dock always rejects a drop outright.
+        // Without this guard, a drop onto a full dock still inserted,
+        // silently pushing the last icon past dockCapacity where Dock's
+        // repeat(slotCount) never draws it again - an icon would vanish and
+        // the drop would look like it failed.
+        if (destination is HomeLocation.Dock && dockWorking.size >= dockCapacity) return null
 
         val targetList = listFor(destination) ?: pagesWorking.lastOrNull() ?: run {
             pagesWorking.add(mutableListOf(item))

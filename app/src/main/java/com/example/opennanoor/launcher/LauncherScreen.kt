@@ -380,7 +380,13 @@ fun LauncherScreen(
                 }
 
                 // Only a drop that dwelled over this exact slot folds into it.
-                val fold = drag.folderArmed && drag.hoverTarget == target
+                // The dock never merges into a folder (see dockDropTarget's
+                // own comment on this) - drag.hoverTarget is only ever set
+                // from a page's own hold-zone, so it can never legitimately
+                // equal a Dock target already, but excluding Dock here
+                // explicitly means that isn't something a future change to
+                // the hover logic could accidentally reintroduce.
+                val fold = drag.folderArmed && drag.hoverTarget == target && target !is HomeLocation.Dock
                 val origin = drag.origin
 
                 // A full dock rejects this drop outright (see insertItem) -
