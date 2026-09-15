@@ -34,8 +34,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -43,6 +45,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
@@ -54,6 +60,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -81,6 +88,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
@@ -90,6 +98,8 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -100,10 +110,6 @@ import kotlinx.coroutines.launch
 @Composable
 fun LauncherScreen(
     state: LauncherUiState,
-    // See the call site's own comment (LauncherActivity) for why a dock
-    // capacity decision at drop time can't just trust this composable's own
-    // `state` parameter.
-    currentDockIconCount: () -> Int = { state.dockIconCount },
     onLaunchApp: (LaunchableApp) -> Unit,
     onOpenSettings: () -> Unit,
     drawerOpen: Boolean,
@@ -181,6 +187,15 @@ fun LauncherScreen(
     // of cutting between two different renders of the same icon.
     var justDropped by remember { mutableStateOf<JustDropped?>(null) }
     val topPadding = 48.dp + insets.calculateTopPadding()
+
+    // Dragging down anywhere on a page (not just from the very top, which
+    // stays the system's own notification-shade gesture) reveals this - a
+    // quick way to find an app without opening the full drawer. Purely
+    // local UI state, same as editing/drawerOpen conceptually but with
+    // nothing else needing to know about it or survive it across a
+    // recomposition from elsewhere.
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     // The authoritative cell measurements, reported up by whichever
@@ -344,7 +359,7 @@ fun LauncherScreen(
             // already tracks the true "is the finger over the dock right
             // now" check (see its own assignment), so trust that first.
             if (!drag.overDock) return false
-            val iconPx = with(density) { dockIconSize(state.dockIconCount).toPx() }
+            val iconPx = with(density) { dockIconSize(state.dock.size).toPx() }
             val n = (state.dock.size - 1).coerceAtLeast(1)
             val gapPx = ((bounds.width - iconPx * n) / (n + 1)).coerceAtLeast(0f)
             val pitchPx = iconPx + gapPx
@@ -360,15 +375,6 @@ fun LauncherScreen(
             // mid-animation when the finger lifts, and cancelling would
             // strand the pager half-scrolled between two pages instead of
             // letting the flip it already committed to finish landing.
-            // A dock-icon-count change made on the settings screen only
-            // reaches this composable's own `state` on its next
-            // recomposition - which may not have happened yet by the time a
-            // drag that started before it finishes. Reading it fresh here
-            // (see currentDockIconCount's own comment at the call site)
-            // means a drop decided the instant a setting changes still sees
-            // the true current capacity instead of whatever this gesture's
-            // stale snapshot still says.
-            val dockIconCountNow = currentDockIconCount()
             val item = drag.item
             if (item != null) {
                 val dragOrigin = drag.origin
@@ -408,7 +414,7 @@ fun LauncherScreen(
                             } else {
                                 itemCount + 1
                             }
-                            val iconPx = with(density) { dockIconSize(dockIconCountNow).toPx() }
+                            val iconPx = with(density) { dockIconSize(state.dock.size).toPx() }
                             val n = packingCount.coerceAtLeast(1)
                             val gapPx = ((bounds.width - iconPx * n) / (n + 1)).coerceAtLeast(0f)
                             val pitchPx = iconPx + gapPx
@@ -470,11 +476,8 @@ fun LauncherScreen(
                 // than needing a slot of its own.
                 val dockFull = target is HomeLocation.Dock &&
                     origin !is HomeLocation.Dock &&
-                    state.dock.size >= dockIconCountNow &&
+                    state.dock.size >= DOCK_MAX_SIZE &&
                     !fold
-
-                if (target is HomeLocation.Dock) {
-                }
 
                 if (dockFull) {
                     // Ping back to where it came from, then let go - the
@@ -553,14 +556,15 @@ fun LauncherScreen(
         }
 
         // A real backdrop blur of the actual home screen - wallpaper and
-        // icons genuinely behind it, not a fake copy - while a folder is
-        // open, the way iOS's newer glass material reads: content seen
-        // through it, not hidden behind a flat tint. Opening a folder is a
-        // discrete tap, not a continuous drag signal, so reading
-        // state.openFolder here in composition carries none of the
-        // gesture-cancellation risk that ruled out reading drag fields this
-        // way - nothing is being dragged when this changes.
+        // icons genuinely behind it, not a fake copy - while a folder or the
+        // search panel is open, the way iOS's newer glass material reads:
+        // content seen through it, not hidden behind a flat tint. Both are
+        // discrete state flips, not a continuous drag signal, so reading
+        // them here in composition carries none of the gesture-cancellation
+        // risk that ruled out reading drag fields this way - nothing is
+        // being dragged when either changes.
         val folderOpen = state.openFolder != null
+        val glassOpen = folderOpen || searchOpen
         // Ramped rather than switched on outright - the glass frosting over
         // as the folder grows, and clearing again as it shrinks away, is
         // most of what makes the whole thing read as one movement instead
@@ -568,7 +572,7 @@ fun LauncherScreen(
         // graphicsLayer lambda below, so each frame of it invalidates only
         // the draw pass, never a recomposition.
         val blurRadius by animateFloatAsState(
-            targetValue = if (folderOpen) BLUR_RADIUS_PX else 0f,
+            targetValue = if (glassOpen) BLUR_RADIUS_PX else 0f,
             animationSpec = tween(FOLDER_OPEN_MS, easing = FastOutSlowInEasing),
             label = "folderBlur"
         )
@@ -615,7 +619,10 @@ fun LauncherScreen(
                     .onGloballyPositioned { pagerSizePx = it.size }
                     .pointerInput(Unit) {
                         detectVerticalDragGestures { _, dragAmount ->
-                            if (dragAmount < -DRAWER_DRAG_THRESHOLD) onDrawerOpenChange(true)
+                            when {
+                                dragAmount < -DRAWER_DRAG_THRESHOLD -> onDrawerOpenChange(true)
+                                dragAmount > SEARCH_DRAG_THRESHOLD -> searchOpen = true
+                            }
                         }
                     }
             ) { pageIndex ->
@@ -665,7 +672,6 @@ fun LauncherScreen(
 
             Dock(
                 items = state.dock,
-                slotCount = state.dockIconCount,
                 drag = drag,
                 editing = editing,
                 onTap = ::handleTap,
@@ -679,7 +685,7 @@ fun LauncherScreen(
                 justDropped = justDropped?.takeIf { it.location is HomeLocation.Dock },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = 8.dp)
                     .padding(bottom = 8.dp + insets.calculateBottomPadding())
             )
         }
@@ -761,6 +767,24 @@ fun LauncherScreen(
             )
         }
 
+        SearchPanel(
+            visible = searchOpen,
+            apps = state.allApps,
+            recentApps = state.recentApps,
+            query = searchQuery,
+            onQueryChange = { searchQuery = it },
+            insets = insets,
+            onLaunch = { app ->
+                searchOpen = false
+                searchQuery = ""
+                onLaunchApp(app)
+            },
+            onDismiss = {
+                searchOpen = false
+                searchQuery = ""
+            }
+        )
+
         state.openFolder?.let { folder ->
             val draggingOutOfThis = drag.active && drag.origin.let {
                 it is HomeLocation.Folder && it.folderId == folder.folderId
@@ -799,7 +823,7 @@ fun LauncherScreen(
                 with(density) { cellWidthPx.toDp() },
                 with(density) { cellHeightPx.toDp() }
             ),
-            dockIconSize = dockIconSize(state.dockIconCount)
+            dockIconSize = dockIconSize(state.dock.size)
         )
 
         // The folder someone is dwelling on to drop into expands into a
@@ -1033,13 +1057,6 @@ private fun RemoveZone(highlighted: Boolean, onPositioned: (Rect) -> Unit) {
 @Composable
 private fun Dock(
     items: List<HomeItem>,
-    // Always renders exactly this many slots, whether or not the dock is
-    // actually full - the icon size (dockIconSize) is derived from this
-    // count, not from how many apps happen to be sitting there, so a
-    // half-empty 5-icon dock still shows 5-icon-sized icons, not 4-sized
-    // ones with gaps. The dock's own outer bounds (height, padding, corner
-    // radius) never change with this - only what's drawn inside does.
-    slotCount: Int,
     drag: DragCoordinator,
     editing: Boolean,
     onTap: (HomeItem) -> Unit,
@@ -1056,7 +1073,10 @@ private fun Dock(
     justDropped: JustDropped? = null,
     modifier: Modifier = Modifier
 ) {
-    val iconSize = dockIconSize(slotCount)
+    // Tracks however many apps are actually in the dock right now - no
+    // separate capacity setting any more, so removing an icon shrinks
+    // straight to that count's own size and adding one back grows it again.
+    val iconSize = dockIconSize(items.size)
     val density = LocalDensity.current
 
     BoxWithConstraints(
@@ -1064,7 +1084,17 @@ private fun Dock(
             .height(DOCK_AREA_HEIGHT - 8.dp)
             .clip(RoundedCornerShape(28.dp))
             .background(Color.White.copy(alpha = 0.12f))
-            .padding(vertical = 10.dp, horizontal = 8.dp)
+            // Vertical padding was exactly 10dp+10dp, leaving this Box's own
+            // inner maxHeight at precisely 68dp - equal to iconPx at its
+            // largest (PAGE_4_ICON_SIZE), with zero slack. HomeItemTile's
+            // own Column then adds its own 2dp+2dp vertical padding on top
+            // of THAT, which had nowhere to go - the icon Image itself,
+            // sized to exactly 68dp, got coerced down to fit the 64dp
+            // actually left over, silently rendering smaller than its own
+            // requested size. Freeing a few dp here (not the dock block's
+            // own outer height, DOCK_AREA_HEIGHT, which stays untouched)
+            // gives that padding room to exist without shrinking the icon.
+            .padding(vertical = 6.dp, horizontal = 8.dp)
     ) {
         // This Box's own on-screen position, translated into the same frame
         // dockBounds uses - needed locally too so the live push-preview
@@ -1084,11 +1114,65 @@ private fun Dock(
         // past the dock's own edge.
         val iconPx = with(density) { iconSize.toPx() }
         val availablePx = with(density) { maxWidth.toPx() }
+        // The dock's own inner horizontal padding (see this Box's modifier
+        // below) PLUS the outer margin the whole dock block sits at from
+        // the actual screen edge (see the Dock() call site's own Modifier)
+        // - both eat into the gap between the true screen edge and where
+        // this Box's own maxWidth starts, so both have to be added back to
+        // reconstruct the page's true, unpadded width below. Missing the
+        // outer one was why the dock's 4 icons still sat visibly inset
+        // from the page's own 4 columns even after this same fix's first
+        // pass.
+        val dockPaddingPx = with(density) { (8.dp + 8.dp).toPx() }
 
         // gapPx for spacing count icons evenly, including the margin
         // before the first and after the last - count+1 equal gaps around
         // count icons is what centres them.
+        //
+        // 4 is a special case: rather than those same n+1 equal gaps (which
+        // for 4 icons leaves noticeably more empty margin at each edge than
+        // the page grid's own 4-column layout has, since a page column's
+        // width comes from splitting the available width into 4 EQUAL
+        // cells, not gaps sized around a fixed icon width), 4 icons are
+        // pitched at availablePx/4 - one per column-width slot, each icon
+        // centred within its own slot the same way a page's 4-column grid
+        // centres its own tiles. Icon size itself (dockIconSize) is
+        // unaffected - only how close to the edge the outer two icons sit.
         fun packing(count: Int): Pair<Float, Float> {
+            if (count == 4) {
+                // The page grid has no side margin of its own at all - a
+                // column's width is the full screen width split 4 ways.
+                // Splitting only availablePx (already inside the dock's
+                // own 8dp side padding) 4 ways was still leaving noticeably
+                // more edge margin than the page grid has, since it never
+                // accounted for that padding the dock itself already ate.
+                // Reconstructing the true, un-padded width first and
+                // dividing THAT by 4 lines the dock's 4 icons up with
+                // where a 4-column page's own tiles actually sit, then
+                // dockPaddingPx is subtracted back off since gap is
+                // measured from the dock's own (padded) left edge, not the
+                // true screen edge.
+                val trueWidth = availablePx + 2 * dockPaddingPx
+                val cellWidth = trueWidth / 4f
+                val gap = ((cellWidth - iconPx) / 2f - dockPaddingPx).coerceAtLeast(0f)
+                return gap to cellWidth
+            }
+            if (count == 5) {
+                // Not aiming for column alignment here (5 doesn't map to
+                // any page layout column count the way 4 does) - just the
+                // same "split into count equal cells, centre each icon in
+                // its own cell" idea as 4 above, applied to the dock's own
+                // available width rather than a reconstructed page width.
+                // The old n+1-equal-gaps formula below gives 5 icons the
+                // same margin at the edges as between each other; splitting
+                // into cells instead gives a smaller edge margin (half a
+                // cell's leftover space) than the gap between icons,
+                // pushing the two outer icons closer to the dock's own
+                // edges.
+                val cellWidth = availablePx / 5f
+                val gap = ((cellWidth - iconPx) / 2f).coerceAtLeast(0f)
+                return gap to cellWidth
+            }
             val n = count.coerceAtLeast(1)
             val gap = ((availablePx - iconPx * n) / (n + 1)).coerceAtLeast(0f)
             return gap to (iconPx + gap)
@@ -1116,7 +1200,7 @@ private fun Dock(
         fun dockWouldRefuse(): Boolean =
             drag.active &&
                 drag.origin !is HomeLocation.Dock &&
-                items.size >= slotCount
+                items.size >= DOCK_MAX_SIZE
 
         fun previewCount(): Int {
             if (!drag.active) return items.size
@@ -1363,6 +1447,76 @@ private fun AppDrawer(
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit
 ) {
+    val gridState = rememberLazyGridState()
+    // Pulling down anywhere on the grid closes it - but only once the grid
+    // is already scrolled to its very top, or this would fight the grid's
+    // own downward scroll through its content. NestedScrollConnection
+    // rather than a plain pointerInput drag detector because the grid
+    // itself already consumes vertical drag for scrolling - a second,
+    // independent drag detector on the same Box would compete with it for
+    // the gesture instead of only stepping in once the grid has nothing
+    // left to scroll. onPreScroll sees a downward drag (available.y > 0)
+    // before the grid gets to consume it; only once accumulated past a
+    // real swipe's worth (not just the small settle of a fling arriving at
+    // the top) does it actually dismiss, and only once per gesture.
+    var pullDistance by remember { mutableStateOf(0f) }
+    var dismissed by remember { mutableStateOf(false) }
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // canScrollBackward, not a hand-rolled index/offset==0 check
+                // - after scrolling down and flinging back, the grid can
+                // visually settle back at the top with a few stray pixels
+                // still in firstVisibleItemScrollOffset (overscroll/spring
+                // settling), which an exact ==0 check treats as "not at the
+                // top" and refuses to arm at all. canScrollBackward is the
+                // same signal the grid's own scrolling already trusts to
+                // decide whether it has anywhere left to scroll to.
+                val atTop = !gridState.canScrollBackward
+                if (!atTop) {
+                    // Confirmed on-device (logged identityHashCode across
+                    // several close/reopen cycles): this composable's
+                    // `remember`ed state is NOT recreated fresh each time
+                    // the drawer reopens - it's the same instance the whole
+                    // session, so `dismissed` staying latched true from the
+                    // first successful dismiss silently blocked every
+                    // later one forever. Resetting it here, the moment the
+                    // grid leaves the top - which happens naturally on
+                    // every reopen as soon as there's any interaction -
+                    // re-arms it instead of relying on a fresh composition
+                    // that was never actually going to happen.
+                    dismissed = false
+                    pullDistance = 0f
+                    return Offset.Zero
+                }
+                if (dismissed) {
+                    return Offset.Zero
+                }
+                // Confirmed on-device (logged available.y while dragging
+                // down at the top): it's positive, not negative - two
+                // earlier guesses at this sign both went the wrong way.
+                if (available.y > 0f) {
+                    pullDistance += available.y
+                    if (pullDistance > PULL_TO_DISMISS_THRESHOLD_PX) {
+                        dismissed = true
+                        onDismiss()
+                    }
+                } else if (available.y < 0f) {
+                    // Only a genuine reversal (scrolling forward into
+                    // content) resets the count - a still-continuous
+                    // downward drag can report an exact 0.0 delta on some
+                    // individual frames (seen on-device), and resetting on
+                    // THOSE too meant the accumulator kept getting zeroed
+                    // mid-gesture, so only some swipes built up enough
+                    // distance to cross the threshold before the next zero
+                    // frame wiped it - intermittent, not a real toggle.
+                    pullDistance = 0f
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -1374,7 +1528,10 @@ private fun AppDrawer(
     ) {
         LazyVerticalGrid(
             columns = GridCells.Fixed(state.columns),
-            modifier = Modifier.fillMaxSize(),
+            state = gridState,
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(nestedScrollConnection),
             contentPadding = PaddingValues(
                 start = 12.dp,
                 end = 12.dp,
@@ -1425,6 +1582,232 @@ private fun AppDrawer(
         }
     }
 }
+
+/**
+ * A quick way to find one app without opening the full drawer - dragging
+ * down from anywhere on a page (see SEARCH_DRAG_THRESHOLD at the call site)
+ * reveals this panel, a third of the screen tall, rather than a full-screen
+ * takeover the way the drawer is. Tapping the scrim below it, same as the
+ * drawer's own background tap, dismisses it.
+ *
+ * The dim behind everything and the glass card are two separately animated
+ * pieces sharing one Box, not one sliding-in block - the backdrop blur
+ * itself (see glassOpen/blurRadius at the call site) is already uniform and
+ * immediate the moment [visible] flips, covering the whole screen at once.
+ * An earlier version slid the dim down together with the card, so for as
+ * long as that slide took, the blur was already showing everywhere but the
+ * dim/card hadn't reached most of the screen yet - the dim's own leading
+ * edge read as a solid line sweeping down over an already-blurred page. The
+ * dim now just fades in place across the full screen in step with the
+ * blur, and only the card itself slides.
+ */
+@Composable
+private fun SearchPanel(
+    visible: Boolean,
+    apps: List<HomeItem.AppItem>,
+    recentApps: List<HomeItem.AppItem>,
+    query: String,
+    onQueryChange: (String) -> Unit,
+    insets: PaddingValues,
+    onLaunch: (LaunchableApp) -> Unit,
+    onDismiss: () -> Unit
+) {
+    // Dismissing (tapping the scrim, launching an app, or however else
+    // `visible` goes false) used to leave the keyboard up on its own timer,
+    // noticeably slower than the panel's own fade/slide-out - closing felt
+    // like two separate things happening rather than one. Hiding it the
+    // instant `visible` flips means it comes down together with the panel
+    // instead of lagging behind it.
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
+    val searchFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(visible) {
+        if (!visible) {
+            keyboardController?.hide()
+            focusManager.clearFocus()
+        } else {
+            // Requesting focus the instant the panel appears, rather than
+            // waiting for the user to tap the field themselves - typing is
+            // the whole point of dragging this down, so the keyboard
+            // should already be there for it.
+            searchFocusRequester.requestFocus()
+            keyboardController?.show()
+        }
+    }
+
+    // Empty until something's actually typed - showing every app by
+    // default meant whichever one sorted first was sitting there looking
+    // like a suggestion before the panel had done anything.
+    // A label starting with what's typed is a closer fit than one that
+    // merely contains it somewhere in the middle - "Maps" typing "ma"
+    // should beat "Claude" - so those sort first rather than staying in
+    // whatever order allApps happened to already be in.
+    val results = remember(apps, query) {
+        if (query.isBlank()) {
+            emptyList()
+        } else {
+            apps.filter { it.entry.app.label.contains(query, ignoreCase = true) }
+                .sortedBy { if (it.entry.app.label.startsWith(query, ignoreCase = true)) 0 else 1 }
+        }
+    }
+
+    val shape = RoundedCornerShape(28.dp)
+    Box(Modifier.fillMaxSize()) {
+        AnimatedVisibility(
+            visible = visible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.15f))
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() }
+                    ) { onDismiss() }
+            )
+        }
+
+        AnimatedVisibility(
+            visible = visible,
+            enter = slideInVertically { -it } + fadeIn(),
+            exit = slideOutVertically { -it } + fadeOut(),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(SEARCH_PANEL_HEIGHT_FRACTION)
+                    .padding(
+                        start = 8.dp,
+                        end = 8.dp,
+                        top = insets.calculateTopPadding() + 12.dp,
+                        bottom = 12.dp
+                    )
+                    .clip(shape)
+                    .background(searchGlassBrush)
+                    .border(1.dp, folderGlassBorderBrush, shape)
+                    .padding(16.dp)
+            ) {
+                val fieldShape = RoundedCornerShape(20.dp)
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(fieldShape)
+                        .background(searchGlassBrush)
+                        .focusRequester(searchFocusRequester),
+                    placeholder = { Text("Search apps") },
+                    singleLine = true,
+                    shape = fieldShape,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = Color.Transparent,
+                        unfocusedContainerColor = Color.Transparent,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.4f),
+                        cursorColor = Color.White,
+                        focusedPlaceholderColor = Color.White,
+                        unfocusedPlaceholderColor = Color.White
+                    )
+                )
+                Spacer(Modifier.height(24.dp))
+                // Nothing typed: the spare space below the search field
+                // holds a quick way back into whatever was opened most
+                // recently. The instant a letter lands, that same row swaps
+                // to the 4 apps that best fit it instead - not a separate
+                // list appearing underneath, the row itself just changes
+                // what it's showing, the same as the dock resizing in place
+                // rather than a second dock appearing. Sized to match the
+                // 4-icon dock (see dockIconSize) specifically, not the page
+                // grid's own 4-column size - the two just happen to be
+                // equal today, but this row means the dock's size,
+                // wherever that ends up.
+                val displayApps = if (query.isBlank()) recentApps else results
+                // Spread edge-to-edge - the leftmost and rightmost SLOTS
+                // (not just whatever icons happen to be filled) line up
+                // with the search field's own left and right edges above
+                // them, same as this Column's own horizontal padding both
+                // already share. Always laying out 4 slots via SpaceBetween
+                // - real icon, or an invisible same-size placeholder if
+                // there's no match for that slot - rather than only the
+                // apps actually present is what keeps every filled
+                // position pinned exactly where it was as the result count
+                // changes. Without the placeholders, SpaceBetween would
+                // recompute fresh positions for however many icons are
+                // actually there each time, so typing another letter and
+                // losing a match would shift every REMAINING icon rather
+                // than just the lost one disappearing off the right.
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    for (slot in 0 until 4) {
+                        val appItem = displayApps.getOrNull(slot)
+                        Box(Modifier.width(dockIconSize(DOCK_BASELINE_FOR_RECENTS))) {
+                            if (appItem != null) {
+                                // HomeItemTile's own Column always
+                                // fillMaxWidth()s itself - fine inside the
+                                // fixed-size cell every other caller places
+                                // it in (a page, the dock, the drawer's
+                                // grid), but as a bare child of this plain
+                                // Row that meant each tile claimed the
+                                // ENTIRE row's width for itself, leaving
+                                // only the first one actually visible.
+                                // This fixed-width Box gives it something
+                                // narrower to fillMaxWidth() within instead.
+                                //
+                                // key(item.id) - see HomePage's own comment
+                                // on this pattern - matters here
+                                // specifically because typing swaps which
+                                // app this same slot index shows; without
+                                // it Compose would otherwise reuse
+                                // whichever tile's state (its wobble/press
+                                // animation) already lived at this position
+                                // for the new, unrelated app that just
+                                // landed there.
+                                key(appItem.id) {
+                                    HomeItemTile(
+                                        item = appItem,
+                                        onClick = { onLaunch(appItem.entry.app) },
+                                        showLabel = false,
+                                        iconSize = dockIconSize(DOCK_BASELINE_FOR_RECENTS)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** dockIconSize's own count for a 4-icon dock - see the recents row above. */
+private const val DOCK_BASELINE_FOR_RECENTS = 4
+
+// The panel is top-anchored, so shrinking this moves only its bottom edge
+// up, leaving the search field and the recents row exactly where they were.
+// Was 1/3 - measured on-device that left about 139px of empty space below
+// the recents row before the card's own bottom border; this trims roughly
+// half of that back off, rather than the icons' own position moving.
+private const val SEARCH_PANEL_HEIGHT_FRACTION = 0.305f
+
+// More opaque than folderGlassBrush - the search panel (its card and the
+// search field inside it, both using this same brush so they read as one
+// material) is meant to look more solidly frosted than the dim scrim
+// around it, not just a slightly brighter version of the same thin glass a
+// folder preview uses.
+private val searchGlassBrush = Brush.linearGradient(
+    colors = listOf(
+        Color.White.copy(alpha = 0.55f),
+        Color.White.copy(alpha = 0.30f)
+    )
+)
 
 /**
  * Full-screen view of one folder's contents. Tap to launch; long-press to
@@ -1663,6 +2046,9 @@ private fun Modifier.pointerInputIf(
 ): Modifier = if (condition) this.pointerInput(condition, block) else this
 
 private const val DRAWER_DRAG_THRESHOLD = 18f
+private const val SEARCH_DRAG_THRESHOLD = 18f
+/** How far a pull-down at the very top of the drawer's grid has to travel before it dismisses. */
+private const val PULL_TO_DISMISS_THRESHOLD_PX = 120f
 private const val EDGE_HOLD_MS = 1000L
 // How long a drag has to rest over an icon before its folder preview opens
 // and a drop there would merge rather than insert.

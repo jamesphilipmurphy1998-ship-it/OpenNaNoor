@@ -29,24 +29,23 @@ class Settings(context: Context) {
         set(value) = prefs.edit { putInt(KEY_ROWS, value.coerceIn(1, 6)) }
 
     /**
-     * How many icons the dock fits, 1-6. Unrelated to the page grid's own
-     * columns setting - the dock's own outer size never changes, only how
-     * many (and so how large) icons it divides that space into. 4 is the
-     * size this app shipped with; other counts scale from it. 6 is fully
-     * wired up now, same as 4 and 5 - a change here only reaches the
-     * running launcher once it resumes (see refreshSettingsIfChanged),
-     * not instantly, so a drop attempted before then can still see the
-     * old count.
+     * Flattened component names of the most recently launched apps, newest
+     * first - shown under the search panel's own search field. Comma-
+     * separated rather than a real list type, matching how this class
+     * stores everything else.
      */
-    var dockIconCount: Int
-        get() = prefs.getInt(KEY_DOCK_COUNT, 4)
-        set(value) = prefs.edit { putInt(KEY_DOCK_COUNT, value.coerceIn(1, 6)) }
+    var recentAppComponents: List<String>
+        get() = prefs.getString(KEY_RECENT_APPS, null)
+            ?.split(",")
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        set(value) = prefs.edit { putString(KEY_RECENT_APPS, value.joinToString(",")) }
 
     private companion object {
         const val KEY_ICON_PACK = "icon_pack"
         const val KEY_COLUMNS = "columns"
         const val KEY_ROWS = "rows"
         const val KEY_IOS_STYLE = "ios_icon_style"
-        const val KEY_DOCK_COUNT = "dock_icon_count"
+        const val KEY_RECENT_APPS = "recent_apps"
     }
 }

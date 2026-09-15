@@ -43,23 +43,31 @@ internal const val ICON_PX = 192
 internal val DEFAULT_ICON_SIZE = 56.dp
 
 /**
- * Icon size for a dock holding [count] icons. 1-3 match the page grid's own
- * 4-column size (PAGE_4_ICON_SIZE) - sparse enough in the dock that they
- * read the same as a sparse page. 4 is its own distinct, larger size
- * (DOCK_4_ICON_SIZE) rather than sharing DEFAULT_ICON_SIZE with 5 - 5 is the
+ * Icon size for a dock holding [count] icons - driven by however many apps
+ * are actually sitting in it right now, not a separate capacity setting, so
+ * removing an icon shrinks the dock down to that count's own size (and
+ * adding one back grows it again) with nothing else for the user to set. 1-3
+ * match the page grid's own 4-column size (PAGE_4_ICON_SIZE) - sparse enough
+ * in the dock that they read the same as a sparse page. 4 shares that same
+ * page-4-column size too now, rather than its own distinct value - 5 is the
  * baseline every other count is judged against, 4 stands out as bigger
  * still since it's the sparsest count the dock scales on its own terms for.
- * 6 is the other way, scaled down from the 5-icon baseline the same
- * proportional way the original design scaled every count.
+ * 6 (DOCK_MAX_SIZE, the most the dock ever holds) is the other way, scaled
+ * down from the 5-icon baseline the same proportional way the original
+ * design scaled every count.
  */
 internal fun dockIconSize(count: Int): Dp = when {
-    count in 1..3 -> PAGE_4_ICON_SIZE
-    count == DOCK_BASELINE_COUNT -> DOCK_4_ICON_SIZE
-    count == DOCK_BASELINE_COUNT + 1 -> DEFAULT_ICON_SIZE
+    count in 1..DOCK_BASELINE_COUNT -> PAGE_4_ICON_SIZE
+    count == DOCK_BASELINE_COUNT + 1 -> DOCK_5_ICON_SIZE
+    count == DOCK_MAX_SIZE -> DOCK_6_ICON_SIZE
     else -> DEFAULT_ICON_SIZE * (DOCK_BASELINE_COUNT + 1) / count
 }
 
-private val DOCK_4_ICON_SIZE = 66.dp
+private val DOCK_5_ICON_SIZE = 61.dp
+private val DOCK_6_ICON_SIZE = 49.dp
+
+/** The most the dock ever holds - there's no separate setting for it any more. */
+internal const val DOCK_MAX_SIZE = 6
 
 private const val DOCK_BASELINE_COUNT = 4
 
@@ -112,11 +120,13 @@ internal fun pageIconSize(columns: Int, cellWidth: Dp, cellHeight: Dp): Dp {
 private fun pageDensityTarget(columns: Int): Dp = when (columns) {
     1, 2, 3, PAGE_BASELINE_COLUMNS -> PAGE_4_ICON_SIZE
     5 -> PAGE_5_ICON_SIZE
+    6 -> PAGE_6_ICON_SIZE
     else -> DEFAULT_ICON_SIZE * (PAGE_BASELINE_COLUMNS.toFloat() / columns).coerceAtMost(1f)
 }
 
 private val PAGE_4_ICON_SIZE = 68.dp
-private val PAGE_5_ICON_SIZE = 68.dp
+private val PAGE_6_ICON_SIZE = 50.dp
+private val PAGE_5_ICON_SIZE = 64.dp
 
 /** Roughly the label's own text line plus the tile Column's vertical padding. */
 private val PAGE_LABEL_RESERVE = 26.dp

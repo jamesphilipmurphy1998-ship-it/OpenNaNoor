@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -53,15 +52,12 @@ fun HomeScreen(
     iconPacks: List<IconPackInfo>,
     activePack: String?,
     isDefaultHome: Boolean,
-    dockIconCount: Int,
-    dockAppCount: Int,
     pageColumns: Int,
     pageRows: Int,
     onToggle: (Feature, Boolean) -> Unit,
     onGrant: (Requirement) -> Unit,
     onSelectPack: (String?) -> Unit,
     onOpenHomeSettings: () -> Unit,
-    onSetDockIconCount: (Int) -> Unit,
     onSetPageColumns: (Int) -> Unit,
     onSetPageRows: (Int) -> Unit,
     modifier: Modifier = Modifier
@@ -103,14 +99,6 @@ fun HomeScreen(
                     packs = iconPacks,
                     active = activePack,
                     onSelect = onSelectPack
-                )
-            }
-
-            item {
-                DockIconCountCard(
-                    count = dockIconCount,
-                    dockAppCount = dockAppCount,
-                    onChange = onSetDockIconCount
                 )
             }
 
@@ -211,75 +199,6 @@ private fun IconPackCard(
                 }
             }
         }
-    }
-}
-
-/**
- * How many icons the dock fits, 1-6. Independent of the page grid's own
- * icon size - icon size and spacing both live inside the dock's own fixed
- * outer footprint no matter what's picked here.
- *
- * 4, 5 and 6 are fully wired up; 1-3 are visible on the slider but don't
- * change anything yet.
- */
-@Composable
-private fun DockIconCountCard(count: Int, dockAppCount: Int, onChange: (Int) -> Unit) {
-    // Dragging updates this immediately so the thumb tracks the finger, but
-    // an attempt to shrink below however many apps are actually sitting in
-    // the dock right now is only resolved once the finger lifts - asking
-    // first, rather than applying a size the dock can't actually hold.
-    var pendingRemoval by remember { mutableStateOf<Int?>(null) }
-    var sliderValue by remember(count) { mutableFloatStateOf(count.toFloat()) }
-
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text("Dock icon count", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (count in 4..6) {
-                    "$count icons in the dock. The dock itself stays the same size - icons pack in tighter or shrink as more are added."
-                } else {
-                    "1-3 aren't wired up yet - pick 4, 5 or 6."
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(4.dp))
-            Slider(
-                value = sliderValue,
-                onValueChange = { sliderValue = it.roundToInt().toFloat().coerceIn(1f, 6f) },
-                onValueChangeFinished = {
-                    val target = sliderValue.toInt()
-                    if (target < dockAppCount) {
-                        pendingRemoval = target
-                        sliderValue = count.toFloat()
-                    } else {
-                        onChange(target)
-                    }
-                },
-                valueRange = 1f..6f,
-                steps = 4
-            )
-            PageLayoutScale(selected = sliderValue.toInt())
-        }
-    }
-
-    val blocked = pendingRemoval
-    if (blocked != null) {
-        AlertDialog(
-            onDismissRequest = { pendingRemoval = null },
-            title = { Text("Dock is too full") },
-            text = {
-                Text(
-                    "Your dock has $dockAppCount apps in it, more than $blocked. " +
-                        "Remove ${dockAppCount - blocked} from the dock on the home " +
-                        "screen first, then come back and try again."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { pendingRemoval = null }) { Text("Got it") }
-            }
-        )
     }
 }
 

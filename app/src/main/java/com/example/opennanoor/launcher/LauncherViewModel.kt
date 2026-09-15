@@ -45,12 +45,12 @@ data class LauncherUiState(
     val pages: List<List<HomeItem>> = emptyList(),
     val dock: List<HomeItem> = emptyList(),
     val allApps: List<HomeItem.AppItem> = emptyList(),
+    val recentApps: List<HomeItem.AppItem> = emptyList(),
     val availablePacks: List<IconPackInfo> = emptyList(),
     val activePack: String? = null,
     val iosStyle: Boolean = false,
     val columns: Int = 4,
     val rows: Int = HomeLayout.ROWS_PER_PAGE,
-    val dockIconCount: Int = 4,
     val openFolderId: String? = null,
     val spillEvent: SpillEvent? = null,
     val loading: Boolean = true
@@ -90,7 +90,6 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             val ios = settings.iosIconStyle
             val columns = settings.columns
             val rows = settings.rows
-            val dockIconCount = settings.dockIconCount
 
             val result = withContext(Dispatchers.IO) {
                 val apps = AppRepository.installedApps(context)
@@ -161,16 +160,39 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 pages = result.pages,
                 dock = result.dock,
                 allApps = result.allApps,
+                recentApps = resolveRecentApps(result.allApps),
                 availablePacks = result.packs,
                 activePack = packChoice.takeIf { result.packActive },
                 iosStyle = ios,
                 columns = columns,
                 rows = rows,
-                dockIconCount = dockIconCount,
                 openFolderId = _state.value.openFolderId,
                 loading = false
             )
         }
+    }
+
+    private fun resolveRecentApps(allApps: List<HomeItem.AppItem>): List<HomeItem.AppItem> {
+        val byComponent = allApps.associateBy { it.entry.app.component }
+        return settings.recentAppComponents
+            .mapNotNull { ComponentName.unflattenFromString(it) }
+            .mapNotNull { byComponent[it] }
+    }
+
+    /**
+     * Called every time an app is launched, from wherever it was tapped -
+     * a page, the dock, a folder, the drawer, or the search panel - so the
+     * search panel's own "recently opened" row (see SearchPanel) stays
+     * current no matter which of those launched it. Persisted immediately
+     * so the order survives the process being killed, not just updated in
+     * memory.
+     */
+    fun recordLaunch(component: ComponentName) {
+        val flat = component.flattenToString()
+        val updated = (listOf(flat) + settings.recentAppComponents.filterNot { it == flat })
+            .take(RECENT_APPS_LIMIT)
+        settings.recentAppComponents = updated
+        _state.value = _state.value.copy(recentApps = resolveRecentApps(_state.value.allApps))
     }
 
     fun selectIconPack(packageName: String?) {
@@ -187,12 +209,13 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * Settings are changed from MainActivity, a separate screen from the
      * running home screen - this instance's [settings] reads happened once,
      * at [init], and never again on their own. Called when the home screen
-     * resumes so a change made while it was in the background (dock icon
-     * count, columns, icon pack, iOS style) actually takes effect instead of
-     * silently being ignored until the process is killed and restarted.
-     * Icon pack and iOS style need every icon regenerated, so those go
-     * through the full [refresh]; the rest are plain numbers the UI already
-     * reads straight off [LauncherUiState].
+     * resumes so a change made while it was in the background (columns/rows,
+     * icon pack, iOS style) actually takes effect instead of silently being
+     * ignored until the process is killed and restarted. The dock has no
+     * settings of its own any more - see [dockIconSize] - so there's nothing
+     * for it to catch up on here. Icon pack and iOS style need every icon
+     * regenerated, so those go through the full [refresh]; columns/rows are
+     * handled here directly.
      */
     fun refreshSettingsIfChanged() {
         val packChanged = settings.iconPackPackage != _state.value.activePack
@@ -213,15 +236,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 val reflowed = current.pages.flatten()
                     .chunked(pageCapacity(newColumns, newRows))
                     .ifEmpty { listOf(emptyList()) }
-                _state.value = current.copy(
-                    pages = reflowed,
-                    columns = newColumns,
-                    rows = newRows,
-                    dockIconCount = settings.dockIconCount
-                )
+                _state.value = current.copy(pages = reflowed, columns = newColumns, rows = newRows)
                 persist(reflowed, current.dock)
             }
-            else -> _state.value = current.copy(dockIconCount = settings.dockIconCount)
         }
     }
 
@@ -231,7 +248,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * dropping onto empty space inserts there, pushing later items along -
      * one falling off the end of a full page spills onto the front of the
      * next one instead of that page silently holding one over its own row
-     * count. A full dock (dockIconCount icons already in it) rejects a
+     * count. A full dock (DOCK_MAX_SIZE icons already in it) rejects a
      * non-merging drop instead, since it has nowhere to spill into.
      */
     fun moveItem(from: HomeLocation, to: HomeLocation, fold: Boolean = false) {
@@ -255,7 +272,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         val spillEvent = insertItem(
-            sourceItem, to, pagesWorking, dockWorking, current.columns, current.rows, current.dockIconCount, fold
+            sourceItem, to, pagesWorking, dockWorking, current.columns, current.rows, fold
         )
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
@@ -308,8 +325,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * aimed, pushing every icon after it along - the one that falls off the
      * end spills onto the front of the next page (see [spillOverflow]) rather
      * than the page holding one more than its own row count. A full dock
-     * (dockCapacity icons already in it) rejects a non-merging drop instead,
-     * since it has nowhere to spill into - its own outer size never changes.
+     * (DOCK_MAX_SIZE icons already in it) rejects a non-merging drop
+     * instead, since it has nowhere to spill into - its own outer size
+     * never changes.
      */
     private fun insertItem(
         item: HomeItem,
@@ -318,7 +336,6 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         dockWorking: MutableList<HomeItem>,
         columns: Int,
         rows: Int,
-        dockCapacity: Int,
         fold: Boolean
     ): SpillEvent? {
         val capacity = pageCapacity(columns, rows)
@@ -343,16 +360,14 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val fold = fold && destination !is HomeLocation.Dock
 
         // Unlike a full page, a full dock has nowhere to spill over to - its
-        // own outer size is fixed by dockCapacity, and since it never
-        // merges either, a full dock always rejects a drop outright.
-        // Without this guard, a drop onto a full dock still inserted,
-        // silently pushing the last icon past dockCapacity where Dock's
-        // repeat(slotCount) never draws it again - an icon would vanish and
-        // the drop would look like it failed.
-        if (destination is HomeLocation.Dock && dockWorking.size >= dockCapacity) {
+        // own outer size is fixed regardless of how many icons are in it,
+        // and since it never merges either, a full dock always rejects a
+        // drop outright. Without this guard, a drop onto a full dock still
+        // inserted, silently pushing the last icon past DOCK_MAX_SIZE where
+        // Dock never draws it again - an icon would vanish and the drop
+        // would look like it failed.
+        if (destination is HomeLocation.Dock && dockWorking.size >= DOCK_MAX_SIZE) {
             return null
-        }
-        if (destination is HomeLocation.Dock) {
         }
 
         val targetList = listFor(destination) ?: pagesWorking.lastOrNull() ?: run {
@@ -364,7 +379,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             is HomeLocation.Page -> target.slot.coerceIn(0, targetList.size)
             is HomeLocation.Dock -> target.slot.coerceIn(
                 0,
-                minOf(targetList.size, dockCapacity - 1)
+                minOf(targetList.size, DOCK_MAX_SIZE - 1)
             )
             is HomeLocation.Folder -> targetList.size
         }
@@ -447,7 +462,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
         val spillEvent = insertItem(
-            HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.rows, current.dockIconCount, fold
+            HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.rows, fold
         )
 
         val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
@@ -613,5 +628,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         /** Render size for icons. Generous so they stay sharp when scaled. */
         const val ICON_PX = 192
+
+        /** Kept a little past the 4 the search panel actually shows, so an
+         *  app uninstalled since its last launch doesn't shrink the row. */
+        const val RECENT_APPS_LIMIT = 8
     }
 }
