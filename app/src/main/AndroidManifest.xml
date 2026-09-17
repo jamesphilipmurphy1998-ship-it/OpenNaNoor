@@ -96,6 +96,22 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Control Center's now-playing row - see MediaListenerService's
+             own doc comment for why this exists despite never reading
+             actual notification content. permission="BIND_NOTIFICATION_
+             LISTENER_SERVICE" restricts binding to the system itself, the
+             same as any other listener service; enabling it for this app
+             at all is a separate step in its own Settings screen. -->
+        <service
+            android:name=".service.MediaListenerService"
+            android:exported="true"
+            android:label="OpenNaNoor now playing"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

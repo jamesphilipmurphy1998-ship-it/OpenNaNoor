@@ -1012,9 +1012,22 @@ fun LauncherScreen(
             visible = controlCenterOpen,
             insets = insets,
             onDismiss = { controlCenterOpen = false },
+            // Only ever grows, never shrinks. The panel's own real height
+            // changes with its content (whether Now Playing has a track to
+            // show, whether the brightness permission prompt is still up) -
+            // taking whatever was measured LAST meant the swipe zone
+            // could shrink to match a smaller state the panel happened to
+            // be left in, and a swipe that looked like it landed in the
+            // same corner as always would fall outside that now-smaller
+            // zone and open search instead - "doesn't always work".
+            // Tracking the largest size ever seen keeps the zone covering
+            // everything the panel could possibly show, at the cost of
+            // covering a bit of space it isn't currently using in a
+            // smaller state - a far smaller cost than an inconsistent
+            // trigger.
             onBoundsMeasured = { widthPx, heightPx ->
-                controlCenterWidthPx = widthPx
-                controlCenterHeightPx = heightPx
+                controlCenterWidthPx = maxOf(controlCenterWidthPx, widthPx)
+                controlCenterHeightPx = maxOf(controlCenterHeightPx, heightPx)
             }
         )
 

@@ -41,6 +41,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AirplanemodeActive
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -151,6 +153,7 @@ internal fun ControlCenterPanel(
             ) {
                 FlashlightToggle()
                 BrightnessSlider()
+                NowPlayingRow()
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     WifiStatusButton(modifier = Modifier.weight(1f))
                     BluetoothStatusButton(modifier = Modifier.weight(1f))
@@ -399,6 +402,136 @@ private fun AirplaneModeButton(modifier: Modifier = Modifier) {
     ) {
         Icon(Icons.Filled.AirplanemodeActive, contentDescription = null, tint = controlCenterContentColor)
         Text("Airplane", color = controlCenterContentColor, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/**
+ * Whatever's currently playing, if anything - MediaSessionManager only
+ * hands back active sessions to an app with notification listener access
+ * (see MediaListenerService, the component this checks against), a
+ * separate opt-in with its own Settings screen. Without it granted, this
+ * shows a one-line prompt instead of controls; with nothing actually
+ * playing, it shows nothing at all rather than an empty placeholder.
+ */
+@Composable
+private fun NowPlayingRow() {
+    val context = LocalContext.current
+    val componentName = remember {
+        android.content.ComponentName(context, com.example.opennanoor.service.MediaListenerService::class.java)
+    }
+    fun hasAccess() = runCatching {
+        Settings.Secure.getString(context.contentResolver, "enabled_notification_listeners")
+            ?.contains(componentName.flattenToString()) == true
+    }.getOrDefault(false)
+
+    var hasAccessState by remember { mutableStateOf(hasAccess()) }
+    if (!hasAccessState) {
+        Text(
+            "Tap to allow Now Playing access",
+            color = controlCenterContentColor.copy(alpha = 0.7f),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable {
+                    context.startActivity(
+                        Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    )
+                    hasAccessState = hasAccess()
+                }
+        )
+        return
+    }
+
+    val sessionManager = remember {
+        context.getSystemService(android.media.session.MediaSessionManager::class.java)
+    }
+    var controller by remember { mutableStateOf<android.media.session.MediaController?>(null) }
+    var title by remember { mutableStateOf<String?>(null) }
+    var artist by remember { mutableStateOf<String?>(null) }
+    var playing by remember { mutableStateOf(false) }
+
+    fun pickController(): android.media.session.MediaController? {
+        val sessions = runCatching { sessionManager?.getActiveSessions(componentName) }.getOrNull().orEmpty()
+        // Prefer whichever session is actually mid-playback over one just
+        // sitting paused (a music app left open from earlier, say) - the
+        // first active session isn't necessarily the one the user means by
+        // "what's playing right now".
+        return sessions.firstOrNull {
+            it.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING
+        } ?: sessions.firstOrNull()
+    }
+
+    fun refreshFrom(c: android.media.session.MediaController?) {
+        title = c?.metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
+        artist = c?.metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
+        playing = c?.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING
+    }
+
+    DisposableEffect(sessionManager, hasAccessState) {
+        if (sessionManager == null) return@DisposableEffect onDispose {}
+        val callback = object : android.media.session.MediaController.Callback() {
+            override fun onMetadataChanged(metadata: android.media.MediaMetadata?) {
+                refreshFrom(controller)
+            }
+            override fun onPlaybackStateChanged(state: android.media.session.PlaybackState?) {
+                refreshFrom(controller)
+            }
+        }
+        fun attach(c: android.media.session.MediaController?) {
+            controller?.unregisterCallback(callback)
+            controller = c
+            c?.registerCallback(callback)
+            refreshFrom(c)
+        }
+        attach(pickController())
+        val sessionsListener =
+            android.media.session.MediaSessionManager.OnActiveSessionsChangedListener { attach(pickController()) }
+        runCatching { sessionManager.addOnActiveSessionsChangedListener(sessionsListener, componentName) }
+        onDispose {
+            controller?.unregisterCallback(callback)
+            runCatching { sessionManager.removeOnActiveSessionsChangedListener(sessionsListener) }
+        }
+    }
+
+    val trackTitle = title
+    if (trackTitle.isNullOrBlank()) return
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color.Black.copy(alpha = 0.05f))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                trackTitle,
+                color = controlCenterContentColor,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1
+            )
+            if (!artist.isNullOrBlank()) {
+                Text(
+                    artist.orEmpty(),
+                    color = controlCenterContentColor.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
+            }
+        }
+        Icon(
+            imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+            contentDescription = if (playing) "Pause" else "Play",
+            tint = controlCenterContentColor,
+            modifier = Modifier
+                .clickable {
+                    val transport = controller?.transportControls ?: return@clickable
+                    if (playing) transport.pause() else transport.play()
+                }
+        )
     }
 }
 
