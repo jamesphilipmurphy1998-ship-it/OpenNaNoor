@@ -209,19 +209,48 @@ class WidgetHostController(
     }
 
     private fun finishBinding(appWidgetId: Int, info: AppWidgetProviderInfo) {
-        // Lands at the very top of whichever page the user was actually on
-        // (pendingPage) - free to drag anywhere else (including a
-        // different page, or further down the same one) afterwards same as
-        // any other widget. Doesn't yet push whatever icons/widgets were
-        // already occupying that top row out of the way - it can land
-        // overlapping them for now, same as any other reflow gap this app
-        // doesn't yet resolve automatically.
+        // Lands as close to the top of whichever page the user was
+        // actually on (pendingPage) as it can without overlapping whatever
+        // widget already occupies row 0 - free to drag anywhere else
+        // (including a different page, or further down the same one)
+        // afterwards same as any other widget. This used to always use
+        // row 0 outright regardless of what else was there, which could
+        // land a new widget directly on top of an existing one - both
+        // occupying the same rows, one drawn over the other and reading as
+        // "an invisible widget I can't see" (the covered one, still
+        // present in placements, just never visible or reachable under
+        // whatever landed on top of it).
         val page = pendingPage
-        val placement = WidgetPlacement(appWidgetId, page = page, topRow = 0, rowSpan = WIDGET_RESERVED_ROWS)
+        val topRow = firstFreeRow(page, WIDGET_RESERVED_ROWS)
+        val placement = WidgetPlacement(appWidgetId, page = page, topRow = topRow, rowSpan = WIDGET_RESERVED_ROWS)
         settings.widgetPlacements = settings.widgetPlacements + placement
         placedWidgets = placedWidgets + PlacedWidget(
-            appWidgetId, createHostView(appWidgetId, info), page, 0, WIDGET_RESERVED_ROWS, minHeightDpFor(info)
+            appWidgetId, createHostView(appWidgetId, info), page, topRow, WIDGET_RESERVED_ROWS, minHeightDpFor(info)
         )
+    }
+
+    /** The lowest row on [page], starting from 0, a [rowSpan]-tall widget
+     *  can land at without overlapping any widget already there. Repeatedly
+     *  advances past whichever existing widget it's still colliding with
+     *  (to just below that widget's own bottom row) until nothing on the
+     *  page conflicts any more - guaranteed to terminate since candidate
+     *  only ever increases, and there are finitely many widgets to advance
+     *  past. */
+    private fun firstFreeRow(page: Int, rowSpan: Int): Int {
+        val onPage = settings.widgetPlacements.filter { it.page == page }
+        var candidate = 0
+        var movedPastSomething = true
+        while (movedPastSomething) {
+            movedPastSomething = false
+            for (other in onPage) {
+                val overlaps = candidate < other.topRow + other.rowSpan && other.topRow < candidate + rowSpan
+                if (overlaps) {
+                    candidate = other.topRow + other.rowSpan
+                    movedPastSomething = true
+                }
+            }
+        }
+        return candidate
     }
 
     private fun createHostView(appWidgetId: Int, info: AppWidgetProviderInfo): AppWidgetHostView =
