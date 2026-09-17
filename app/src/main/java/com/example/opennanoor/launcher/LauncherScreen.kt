@@ -104,8 +104,12 @@ fun LauncherScreen(
     onAddWidget: (page: Int) -> Unit = {},
     onRemoveWidget: (appWidgetId: Int) -> Unit = {},
     onWidgetMoved: (appWidgetId: Int, page: Int, row: Int) -> Unit = { _, _, _ -> },
-    onWidgetResized: (appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
-        { _, _, _, _ -> },
+    onWidgetsSwapped: (firstId: Int, secondId: Int) -> Unit = { _, _ -> },
+    onWidgetResized: (appWidgetId: Int, rowSpan: Int, columnSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
+        { _, _, _, _, _ -> },
+    onPickWidgetTextColor: (appWidgetId: Int, color: Int) -> Unit = { _, _ -> },
+    onPickWidgetBackgroundImage: (appWidgetId: Int) -> Unit = {},
+    onClearWidgetBackgroundImage: (appWidgetId: Int) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -217,6 +221,12 @@ fun LauncherScreen(
     // full-screen overlay, not owned by whichever page's widget the
     // spanner was pressed on.
     var widgetOptionsTarget by remember { mutableStateOf<Int?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Which widget the "Text color" dialog is open for - separate from
+    // widgetOptionsTarget since that's already cleared (dismissing the
+    // spanner menu) by the time this dialog is shown.
+    var showTextColorDialogFor by remember { mutableStateOf<Int?>(null) }
+    var showBackgroundImageDialogFor by remember { mutableStateOf<Int?>(null) }
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     // The authoritative cell measurements, reported up by whichever
@@ -254,26 +264,28 @@ fun LauncherScreen(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = { if (editing) onEditingChange(false) },
-                // Guarded on nothing already being mid-drag - a widget's own
-                // long-press-drag detector (an unrelated pointerInput deeper
-                // in this same page) and this one both watch the same raw
-                // touch stream, and Compose doesn't make one recognizing its
-                // long-press first stop the other's independent timer from
-                // firing moments later regardless: on-device logging showed
-                // the widget's own onDragStart and this onLongClick both
-                // firing within 2ms of each other on every attempt. That
-                // race was invisible for as long as every widget's own
-                // RemoteViews had SOME native click target, which happened
-                // to consume the touch before Compose's ancestor detectors
-                // ever saw it (see ClockWidgetProvider's own history for
-                // why removing that fixed resize but broke this) - a
-                // widget with no click target of its own, like the clock
-                // widget now, exposes the race outright. By the time this
-                // callback runs, drag.draggingWidgetId/resizingWidgetId is
-                // already set if a widget's own detector won that race
-                // (it fires first per the logging above), so checking them
-                // here suppresses the losing detector's side effect without
-                // needing to change how either gesture is recognized.
+                // Guarded on nothing already being mid-drag - belt-and-braces
+                // alongside the real fix, which lives on the widget's own
+                // Box in HomePage.kt: it now consumes its touch-down
+                // immediately, which makes Compose's own long-press
+                // detector (backing this combinedClickable) cancel itself
+                // before its timer ever fires. Without that consumption,
+                // this callback and the widget's own onDragStart are two
+                // independent ~500ms timers racing on the same unconsumed
+                // down event with no defined winner - on-device logging
+                // confirmed both firing within ~2ms of each other, in
+                // whichever order the runtime happened to resume their
+                // coroutines, which alternated between "drag starts" and
+                // "menu opens" from one attempt to the next. That race was
+                // invisible for as long as every widget's own RemoteViews
+                // had SOME native click target, which happened to consume
+                // the touch before Compose's ancestor detectors ever saw it
+                // (see ClockWidgetProvider's own history for why removing
+                // that fixed resize but broke this) - a widget with no click
+                // target of its own, like the clock widget, exposed the race
+                // outright. This draggingWidgetId/resizingWidgetId check
+                // stays as a second line of defense in case some future
+                // widget's gesture setup ever skips that consumption.
                 onLongClick = {
                     if (drag.draggingWidgetId == null && drag.resizingWidgetId == null) {
                         showHomeMenu = true
@@ -357,7 +369,17 @@ fun LauncherScreen(
         fun checkEdgeFlip(center: Offset) {
             val edgeTriggerPx = with(density) { EDGE_TRIGGER_DP.toPx() }
             val side = when {
-                drag.overDock || drag.overRemoveZone -> 0
+                // A folder (or any fold-eligible icon) sitting in a page's
+                // own leftmost/rightmost column puts a finger dwelling over
+                // it to fold well inside this same edge strip - and
+                // EDGE_HOLD_MS/FOLDER_DWELL_MS are both 1000ms, an
+                // unintentional exact tie. Without this, the page flipped
+                // out from under a fold attempt at almost the same instant
+                // it would have armed, landing the drag on a different
+                // page's own reflowed layout mid-gesture - read as "the
+                // folder just moves around" since what actually moved was
+                // the page underneath the still-held finger.
+                drag.overDock || drag.overRemoveZone || drag.hoverTarget != null -> 0
                 center.x < edgeTriggerPx && pagerState.currentPage > 0 -> -1
                 center.x > outerWidthPx - edgeTriggerPx && pagerState.currentPage < pageCount - 1 -> 1
                 else -> 0
@@ -402,7 +424,17 @@ fun LauncherScreen(
             // (right for reflow, used a few lines down in handleDragEnded's
             // insert path) identifies the wrong occupant once a same-page
             // drag has left its own cell.
-            val hovered = if (drag.overDock || drag.overRemoveZone) null else {
+            // A dragged FOLDER never actually merges with anything -
+            // insertItem's own fold cases only match when the DRAGGED item
+            // is an AppItem (app-into-folder, or app-into-app making a new
+            // folder); dragging a folder always falls through to a plain
+            // insert regardless of the fold flag. Arming a fold anyway
+            // (passing over any icon en route for a full FOLDER_DWELL_MS)
+            // still flips drag.folderArmed true, which hides the floating
+            // DragGhost - a real user report as "the folder vanished under
+            // my finger" while just carrying it across other icons to its
+            // new spot, nowhere near actually dropping it on anything.
+            val hovered = if (drag.overDock || drag.overRemoveZone || drag.item is HomeItem.FolderItem) null else {
                 state.pages.getOrNull(pagerState.currentPage)?.let { pageItems ->
                     val originSlot = (drag.origin as? HomeLocation.Page)
                         ?.takeIf { it.page == pagerState.currentPage }?.slot
@@ -413,6 +445,7 @@ fun LauncherScreen(
                 }
             }
             if (hovered != drag.hoverTarget) {
+                android.util.Log.d("OnnFold", "hoverTarget ${drag.hoverTarget} -> $hovered (origin=${drag.origin})")
                 drag.hoverTarget = hovered
                 // A momentary flicker back to null - a real finger held
                 // rock-steady through a whole dwell would still twitch a
@@ -592,6 +625,7 @@ fun LauncherScreen(
                 // that isn't something a future change to the hover logic
                 // could accidentally reintroduce.
                 val fold = drag.folderArmed && drag.armedTarget == target && target !is HomeLocation.Dock
+                android.util.Log.d("OnnFold", "DROP dragOrigin=$dragOrigin target=$target folderArmed=${drag.folderArmed} armedTarget=${drag.armedTarget} fold=$fold")
                 val origin = drag.origin
 
                 // A full dock rejects this drop outright (see insertItem) -
@@ -694,14 +728,30 @@ fun LauncherScreen(
         // out of a target by a pixel or two even while trying to hold
         // still, and reacting to every one of those as a fresh target reset
         // the dwell countdown before it could ever finish.
+        //
+        // Asymmetric on purpose: a genuine NEW target still debounces fast
+        // (HOVER_DEBOUNCE_MS) so the fold preview pops in promptly, but a
+        // flicker BACK TO NULL (the finger still resting on the same real
+        // target, just measured a pixel outside its zone for one frame -
+        // on-device logging caught this happening mid-dwell, well after a
+        // fold had already started counting down) gets a much longer grace
+        // period before it's treated as a real departure. Symmetric
+        // debouncing here meant that one-frame null blip cancelled
+        // `collectLatest`'s in-flight delay(FOLDER_DWELL_MS) outright - the
+        // whole countdown had to restart from zero, and often lost the race
+        // against the user actually releasing. The genuinely different
+        // target case (this cell to a DIFFERENT one) still only waits
+        // HOVER_DEBOUNCE_MS, same as before.
         LaunchedEffect(Unit) {
             androidx.compose.runtime.snapshotFlow { drag.hoverTarget }
-                .debounce(HOVER_DEBOUNCE_MS)
+                .debounce { target -> if (target == null) NULL_HOVER_DEBOUNCE_MS else HOVER_DEBOUNCE_MS }
                 .collectLatest { target ->
                     if (target != null) {
+                        android.util.Log.d("OnnFold", "dwell starting for $target")
                         kotlinx.coroutines.delay(FOLDER_DWELL_MS)
                         drag.armedTarget = target
                         drag.folderArmed = true
+                        android.util.Log.d("OnnFold", "ARMED $target")
                     }
                 }
         }
@@ -866,6 +916,7 @@ fun LauncherScreen(
                         onRemoveWidget = onRemoveWidget,
                         onOpenWidgetOptions = { appWidgetId -> widgetOptionsTarget = appWidgetId },
                         onWidgetMoved = onWidgetMoved,
+                        onWidgetsSwapped = onWidgetsSwapped,
                         onWidgetResized = onWidgetResized,
                         onWidgetDragMoved = ::handleWidgetDragMoved,
                         spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
@@ -1087,12 +1138,43 @@ fun LauncherScreen(
         }
 
         if (widgetOptionsTarget != null) {
+            val targetId = widgetOptionsTarget
+            // Only our own custom widgets (the clock widget so far) have
+            // RemoteViews we control - a third-party widget's own layout
+            // isn't ours to recolor or re-background, so these options only
+            // show up for a provider that's actually part of this app.
+            val isOwnWidget = widgets.firstOrNull { it.appWidgetId == targetId }
+                ?.view?.appWidgetInfo?.provider?.packageName == context.packageName
             WidgetOptionsMenu(
                 onRemove = {
-                    widgetOptionsTarget?.let { onRemoveWidget(it) }
+                    targetId?.let { onRemoveWidget(it) }
                     widgetOptionsTarget = null
                 },
-                onDismiss = { widgetOptionsTarget = null }
+                onDismiss = { widgetOptionsTarget = null },
+                showAppearanceOptions = isOwnWidget,
+                onPickTextColor = {
+                    widgetOptionsTarget = null
+                    targetId?.let { showTextColorDialogFor = it }
+                },
+                onPickBackgroundImage = {
+                    widgetOptionsTarget = null
+                    targetId?.let { showBackgroundImageDialogFor = it }
+                }
+            )
+        }
+
+        showTextColorDialogFor?.let { targetId ->
+            WidgetTextColorDialog(
+                onPick = { color -> onPickWidgetTextColor(targetId, color) },
+                onDismiss = { showTextColorDialogFor = null }
+            )
+        }
+
+        showBackgroundImageDialogFor?.let { targetId ->
+            WidgetBackgroundImageDialog(
+                onClear = { onClearWidgetBackgroundImage(targetId) },
+                onChoosePhoto = { onPickWidgetBackgroundImage(targetId) },
+                onDismiss = { showBackgroundImageDialogFor = null }
             )
         }
 

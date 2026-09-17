@@ -23,13 +23,15 @@ import com.example.opennanoor.core.WidgetPlacement
 
 /**
  * One placed widget: its id, its hosted view, which page it's on, which row
- * (0-indexed from the top) it starts at, how many rows tall it currently is,
- * and the shortest it can ever be shrunk to - the widget's own declared
- * [AppWidgetProviderInfo.minResizeHeight] (falling back to minHeight, for a
- * provider that doesn't set a smaller one specifically for live resizing),
- * in dp. Kept as dp, not rows, since a row's own height in px depends on
- * this device's row-count setting - HomePage converts it to a row count
- * against whatever cellHeightPx it's actually rendering with right now.
+ * (0-indexed from the top) it starts at, how many rows tall and columns wide
+ * it currently is, and the shortest/narrowest it can ever be shrunk to - the
+ * widget's own declared [AppWidgetProviderInfo.minResizeHeight]/
+ * [AppWidgetProviderInfo.minResizeWidth] (falling back to minHeight/
+ * minWidth, for a provider that doesn't set a smaller one specifically for
+ * live resizing), in dp. Kept as dp, not rows/columns, since a cell's own
+ * size in px depends on this device's row/column-count setting - HomePage
+ * converts each to a row/column count against whatever cellHeightPx/
+ * cellWidthPx it's actually rendering with right now.
  */
 data class PlacedWidget(
     val appWidgetId: Int,
@@ -37,7 +39,9 @@ data class PlacedWidget(
     val page: Int,
     val topRow: Int,
     val rowSpan: Int,
-    val minHeightDp: Int
+    val columnSpan: Int,
+    val minHeightDp: Int,
+    val minWidthDp: Int
 )
 
 /**
@@ -102,23 +106,57 @@ class WidgetHostController(
     }
 
     /**
-     * Resizes one widget to [rowSpan] rows tall - dragging its resize
-     * handle in HomePage's own widget block resolves to this. [widthDp] is
-     * the widget's own current on-screen width (full page width, in dp) and
-     * [heightDp] its new height - both handed straight to the widget's own
+     * Exchanges two same-page widgets' order - dragging one widget onto
+     * another's occupied rows resolves to this instead of [setWidgetPlacement],
+     * which only ever refuses a drop that collides with an existing widget.
+     * NOT a blind topRow exchange: that only avoids the two overlapping
+     * EACH OTHER when they're the same height. Two widgets sitting directly
+     * adjacent (span 1 at row 0, span 2 at row 1) with a blind swap put the
+     * span-1 one at row 1 and the span-2 one at row 0 - but row 0 + span 2
+     * reaches rows 0-1, so it still covers row 1, where the other widget
+     * now also sits. Instead this stacks them back-to-back starting from
+     * whichever of the two had the smaller topRow: that one's widget moves
+     * to the OTHER end of the pair, immediately after the newly-relocated
+     * one - guaranteed non-overlapping for any pair of heights. Doesn't
+     * check for a third widget sitting in a gap the swap crosses (see
+     * HomePage's own onDragEnd) - a corner case, not this function's job.
+     */
+    fun swapWidgets(firstId: Int, secondId: Int) {
+        val first = settings.widgetPlacements.firstOrNull { it.appWidgetId == firstId } ?: return
+        val second = settings.widgetPlacements.firstOrNull { it.appWidgetId == secondId } ?: return
+        val topId = if (first.topRow <= second.topRow) firstId else secondId
+        val bottomId = if (topId == firstId) secondId else firstId
+        val bottomSpan = if (bottomId == firstId) first.rowSpan else second.rowSpan
+        val anchorRow = minOf(first.topRow, second.topRow)
+        val bottomNewTopRow = anchorRow
+        val topNewTopRow = anchorRow + bottomSpan
+        fun newRow(appWidgetId: Int) = if (appWidgetId == topId) topNewTopRow else bottomNewTopRow
+        settings.widgetPlacements = settings.widgetPlacements.map {
+            if (it.appWidgetId == topId || it.appWidgetId == bottomId) it.copy(topRow = newRow(it.appWidgetId)) else it
+        }
+        placedWidgets = placedWidgets.map {
+            if (it.appWidgetId == topId || it.appWidgetId == bottomId) it.copy(topRow = newRow(it.appWidgetId)) else it
+        }
+    }
+
+    /**
+     * Resizes one widget to [rowSpan] rows tall and [columnSpan] columns
+     * wide - dragging its own corner resize handle in HomePage's widget
+     * block resolves to this. [widthDp]/[heightDp] are its new on-screen
+     * size in dp, handed straight to the widget's own
      * [AppWidgetHostView.updateAppWidgetSize] so its provider gets a proper
      * onAppWidgetOptionsChanged and can redraw for the new size (a compact
      * RemoteViews layout instead of the full one, say) rather than just
      * being stretched or clipped with no say in it.
      */
-    fun resizeWidget(appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) {
+    fun resizeWidget(appWidgetId: Int, rowSpan: Int, columnSpan: Int, widthDp: Int, heightDp: Int) {
         settings.widgetPlacements = settings.widgetPlacements.map {
-            if (it.appWidgetId == appWidgetId) it.copy(rowSpan = rowSpan) else it
+            if (it.appWidgetId == appWidgetId) it.copy(rowSpan = rowSpan, columnSpan = columnSpan) else it
         }
         placedWidgets = placedWidgets.map {
             if (it.appWidgetId == appWidgetId) {
                 it.view.updateAppWidgetSize(null, widthDp, heightDp, widthDp, heightDp)
-                it.copy(rowSpan = rowSpan)
+                it.copy(rowSpan = rowSpan, columnSpan = columnSpan)
             } else it
         }
     }
@@ -140,7 +178,8 @@ class WidgetHostController(
             stillValid += placement
             restored += PlacedWidget(
                 placement.appWidgetId, createHostView(placement.appWidgetId, info),
-                placement.page, placement.topRow, placement.rowSpan, minHeightDpFor(info)
+                placement.page, placement.topRow, placement.rowSpan, placement.columnSpan,
+                minHeightDpFor(info), minWidthDpFor(info)
             )
         }
         if (stillValid != placements) settings.widgetPlacements = stillValid
@@ -222,10 +261,14 @@ class WidgetHostController(
         // whatever landed on top of it).
         val page = pendingPage
         val topRow = firstFreeRow(page, WIDGET_RESERVED_ROWS)
-        val placement = WidgetPlacement(appWidgetId, page = page, topRow = topRow, rowSpan = WIDGET_RESERVED_ROWS)
+        val columnSpan = settings.columns
+        val placement = WidgetPlacement(
+            appWidgetId, page = page, topRow = topRow, rowSpan = WIDGET_RESERVED_ROWS, columnSpan = columnSpan
+        )
         settings.widgetPlacements = settings.widgetPlacements + placement
         placedWidgets = placedWidgets + PlacedWidget(
-            appWidgetId, createHostView(appWidgetId, info), page, topRow, WIDGET_RESERVED_ROWS, minHeightDpFor(info)
+            appWidgetId, createHostView(appWidgetId, info), page, topRow, WIDGET_RESERVED_ROWS, columnSpan,
+            minHeightDpFor(info), minWidthDpFor(info)
         )
     }
 
@@ -263,6 +306,10 @@ class WidgetHostController(
      *  ever being placed at all) for a provider that leaves it unset (0). */
     private fun minHeightDpFor(info: AppWidgetProviderInfo): Int =
         info.minResizeHeight.takeIf { it > 0 } ?: info.minHeight
+
+    /** Same as [minHeightDpFor], for the horizontal axis. */
+    private fun minWidthDpFor(info: AppWidgetProviderInfo): Int =
+        info.minResizeWidth.takeIf { it > 0 } ?: info.minWidth
 }
 
 private const val WIDGET_HOST_ID = 1

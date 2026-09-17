@@ -1,16 +1,21 @@
 package com.example.opennanoor.launcher
 
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -21,6 +26,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.opennanoor.MainActivity
 import com.example.opennanoor.ui.theme.OpenNaNoorTheme
+import com.example.opennanoor.widget.ClockWidgetProvider
+import com.example.opennanoor.widget.ClockWidgetStore
 
 /**
  * The home screen. Declared with CATEGORY_HOME so Android offers it as a
@@ -69,6 +76,29 @@ class LauncherActivity : ComponentActivity() {
 
                 val widgetHost = rememberWidgetHostController(this)
 
+                // Which widget "Background image" was tapped for - read
+                // once the image picker returns, since that activity
+                // result callback is fixed at first composition and can't
+                // capture a value chosen later the normal way.
+                var pendingBackgroundImageTarget by remember { mutableStateOf<Int?>(null) }
+                val currentBackgroundImageTarget by rememberUpdatedState(pendingBackgroundImageTarget)
+                val pickImageLauncher = rememberLauncherForActivityResult(
+                    ActivityResultContracts.GetContent()
+                ) { uri ->
+                    val targetId = currentBackgroundImageTarget
+                    pendingBackgroundImageTarget = null
+                    if (uri != null && targetId != null) {
+                        val original = runCatching {
+                            contentResolver.openInputStream(uri)?.use(BitmapFactory::decodeStream)
+                        }.getOrNull()
+                        if (original != null) {
+                            ClockWidgetStore.setBackgroundImage(this, targetId, downscale(original, maxDimension = 480))
+                            ClockWidgetStore.setBackgroundTransparentFor(this, targetId, false)
+                            ClockWidgetProvider.refresh(this, targetId)
+                        }
+                    }
+                }
+
                 LauncherScreen(
                     state = state,
                     onLaunchApp = {
@@ -87,8 +117,15 @@ class LauncherActivity : ComponentActivity() {
                         // own widgetCountByPage.
                         vm.refreshSettingsIfChanged()
                     },
-                    onWidgetResized = { id, rowSpan, widthDp, heightDp ->
-                        widgetHost.resizeWidget(id, rowSpan, widthDp, heightDp)
+                    onWidgetsSwapped = { firstId, secondId ->
+                        widgetHost.swapWidgets(firstId, secondId)
+                        // Same-page swap never changes either page's own
+                        // reserved row count, but the icon grid still reads
+                        // topRow-derived bands to lay itself out around them.
+                        vm.refreshSettingsIfChanged()
+                    },
+                    onWidgetResized = { id, rowSpan, columnSpan, widthDp, heightDp ->
+                        widgetHost.resizeWidget(id, rowSpan, columnSpan, widthDp, heightDp)
                         // Growing/shrinking a widget changes how many rows
                         // its own page reserves, same reflow reasoning as
                         // onWidgetMoved above.
@@ -108,6 +145,22 @@ class LauncherActivity : ComponentActivity() {
                     onUninstall = vm::uninstallApp,
                     onRenameApp = vm::renameApp,
                     onSpillAnimationDone = vm::clearSpillEvent,
+                    onPickWidgetTextColor = { id, color ->
+                        ClockWidgetStore.setTextColorFor(this, id, color)
+                        ClockWidgetProvider.refresh(this, id)
+                    },
+                    onPickWidgetBackgroundImage = { id ->
+                        pendingBackgroundImageTarget = id
+                        pickImageLauncher.launch("image/*")
+                    },
+                    onClearWidgetBackgroundImage = { id ->
+                        // "No background" - genuinely transparent, not a
+                        // fallback to the default solid scrim (see
+                        // ClockWidgetStore's own backgroundTransparentFor).
+                        ClockWidgetStore.clearBackgroundImage(this, id)
+                        ClockWidgetStore.setBackgroundTransparentFor(this, id, true)
+                        ClockWidgetProvider.refresh(this, id)
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -126,6 +179,23 @@ class LauncherActivity : ComponentActivity() {
         super.onNewIntent(intent)
         homePressed++
     }
+}
+
+/**
+ * Scales [bitmap] down so its longer side is at most [maxDimension] -
+ * a picked photo can be several thousand pixels wide, and
+ * ClockWidgetProvider redecodes whatever's saved on every tick (see its own
+ * scheduleTick), so saving it at full resolution would waste real CPU/memory
+ * every minute for no visible gain at widget size. Returns [bitmap]
+ * unchanged if it's already smaller than that.
+ */
+private fun downscale(bitmap: Bitmap, maxDimension: Int): Bitmap {
+    val longerSide = maxOf(bitmap.width, bitmap.height)
+    if (longerSide <= maxDimension) return bitmap
+    val scale = maxDimension.toFloat() / longerSide
+    return Bitmap.createScaledBitmap(
+        bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true
+    )
 }
 
 /** Runs [block] each time the host lifecycle reaches RESUMED. */

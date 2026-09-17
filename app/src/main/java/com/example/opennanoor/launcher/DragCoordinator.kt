@@ -99,6 +99,10 @@ class DragCoordinator {
      *  only meaningful while [resizingWidgetId] is non-null. */
     var resizingWidgetRowSpan by mutableStateOf(0)
 
+    /** Same as [resizingWidgetRowSpan] but for the widget's column span -
+     *  the corner resize handle drags both at once. */
+    var resizingWidgetColumnSpan by mutableStateOf(0)
+
     val active: Boolean get() = item != null
 
     /** True when this drag began in the drawer rather than on a home slot. */

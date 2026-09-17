@@ -8,12 +8,19 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -100,21 +107,98 @@ internal fun TileOptionsMenu(
 }
 
 /**
- * The menu a widget's own options badge (the spanner) opens - just "Remove
- * widget" for now, same [PopupMenuScrim] as every other popup here. Used to
- * remove instantly on tap, no confirmation at all - one accidental brush of
- * the badge lost the widget outright.
+ * The menu a widget's own options badge (the spanner) opens - "Remove
+ * widget" always, plus "Text color" and "Background image" when
+ * [showAppearanceOptions] is set (only meaningful for a widget this app
+ * itself renders the RemoteViews for, like the clock widget - a
+ * third-party widget's own layout isn't ours to recolor or re-background).
+ * Same [PopupMenuScrim] as every other popup here. Remove still acts
+ * instantly on tap, no confirmation - one accidental brush of the badge
+ * lost the widget outright.
  */
 @Composable
 internal fun WidgetOptionsMenu(
     onRemove: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    showAppearanceOptions: Boolean = false,
+    onPickTextColor: (() -> Unit)? = null,
+    onPickBackgroundImage: (() -> Unit)? = null
 ) {
     // Only the action, same reasoning as TileOptionsMenu above - onRemove
     // itself needs to read widgetOptionsTarget in LauncherScreen before
     // anything clears it, and onDismiss does exactly that.
     PopupMenuScrim(onDismiss = onDismiss) {
+        if (showAppearanceOptions) {
+            onPickTextColor?.let { HomeLongPressMenuItem("Text color", onClick = it) }
+            onPickBackgroundImage?.let { HomeLongPressMenuItem("Background image", onClick = it) }
+        }
         HomeLongPressMenuItem("Remove widget", onClick = onRemove)
+    }
+}
+
+/**
+ * A small fixed palette rather than a full HSV picker - covers the common
+ * cases (white/black plus a handful of saturated colors) without needing
+ * any color-picker dependency or a bunch of slider UI just for a widget's
+ * text. Opens over [WidgetOptionsMenu] the same way [RenameFolderDialog]
+ * sits over its own long-press menu.
+ */
+/**
+ * "No background" first - clears back to the widget's own default solid
+ * color - then "Choose photo" opens the system picker. Same
+ * [PopupMenuScrim] shape as every other popup here.
+ */
+@Composable
+internal fun WidgetBackgroundImageDialog(
+    onClear: () -> Unit,
+    onChoosePhoto: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    PopupMenuScrim(onDismiss = onDismiss) {
+        HomeLongPressMenuItem("No background", onClick = { onClear(); onDismiss() })
+        HomeLongPressMenuItem("Choose photo", onClick = { onChoosePhoto(); onDismiss() })
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun WidgetTextColorDialog(
+    onPick: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val swatches = listOf(
+        0xFFFFFFFF.toInt(), 0xFF000000.toInt(), 0xFFFF3B30.toInt(), 0xFFFF9500.toInt(),
+        0xFFFFCC00.toInt(), 0xFF34C759.toInt(), 0xFF007AFF.toInt(), 0xFFAF52DE.toInt()
+    )
+    PopupMenuScrim(onDismiss = onDismiss) {
+        Text(
+            text = "Text color",
+            color = Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp)
+        )
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            swatches.forEach { swatch ->
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(swatch))
+                        .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
+                        .clickable {
+                            onPick(swatch)
+                            onDismiss()
+                        }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
     }
 }
 

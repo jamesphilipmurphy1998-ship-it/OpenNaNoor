@@ -15,6 +15,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
@@ -32,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.geometry.Offset
@@ -104,6 +107,7 @@ fun HomePage(
      *  (already clamped, collision-free) page and row its own band should
      *  start at - [page] may differ from the page it was dragged from. */
     onWidgetMoved: (appWidgetId: Int, page: Int, row: Int) -> Unit = { _, _, _ -> },
+    onWidgetsSwapped: (firstId: Int, secondId: Int) -> Unit = { _, _ -> },
     /** A widget drag crossed close enough to a screen edge to flip pages -
      *  wired to the same edge-flip machinery an icon drag already uses
      *  (see LauncherScreen's own handleDragMoved/checkEdgeFlip), so a
@@ -113,8 +117,8 @@ fun HomePage(
      *  (already clamped, collision-free) height to commit, [widthDp]/
      *  [heightDp] its new on-screen size in dp for the widget's own
      *  updateAppWidgetSize call. */
-    onWidgetResized: (appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
-        { _, _, _, _ -> },
+    onWidgetResized: (appWidgetId: Int, rowSpan: Int, columnSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
+        { _, _, _, _, _ -> },
     /** Set only on the page an icon just spilled off of - see [SpillEvent]. */
     spillEvent: SpillEvent? = null,
     onSpillAnimationDone: () -> Unit = {},
@@ -259,6 +263,28 @@ fun HomePage(
                     val angle = rememberWobble(enabled = editing, seed = -1 - widget.appWidgetId)
                     Box(
                         Modifier
+                            // Icons are declared AFTER widgets in this same
+                            // parent, so they draw on top by default -
+                            // normally invisible, since bands keep icons
+                            // out of a widget's own rows entirely, but
+                            // during a widget-vs-widget SWAP the two
+                            // widgets animate to their new rows
+                            // independently (each its own Animatable, no
+                            // coordination between them - see the settle
+                            // LaunchedEffect above), so a transient
+                            // one-frame misalignment mid-animation can have
+                            // a widget's edge overlap an icon's position.
+                            // Without this, that transient overlap read as
+                            // "the widget is behind the icons" purely from
+                            // declaration order - a real user report after
+                            // one such swap. zIndex here means a widget can
+                            // never lose that z-fight regardless of
+                            // animation timing, without touching icons'
+                            // own declaration order (which stays after
+                            // widgets for good reason - see HomePage's own
+                            // widgetBands comment on why icons render in
+                            // the gaps around them).
+                            .zIndex(1f)
                             .offset {
                                 val y = if (isDragging) {
                                     // Rendered under exactly where the
@@ -280,6 +306,19 @@ fun HomePage(
                                 width = with(density) { (columns * cellWidthPx).toDp() },
                                 height = with(density) { (liveRowSpan * cellHeightPx).toDp() }
                             )
+                            // Tried .clipToBounds() here to contain a
+                            // third-party widget's content overflow when
+                            // shrunk near its own declared minimum (see
+                            // widget/README.md's "Rounded corners" section
+                            // for the general AppWidgetHostView-clipping
+                            // dead end) - reverted: it also clipped the
+                            // resize handle and RemoveBadge below, both
+                            // deliberately rendered PARTLY OUTSIDE this
+                            // Box's own bounds, losing half their touchable
+                            // area ("icons cut off half the resize
+                            // button" / "can't touch it"). Don't reintroduce
+                            // a clip at this level without moving the
+                            // handle/badge outside its scope first.
                             .graphicsLayer {
                                 rotationZ = if (isDragging) 0f else angle
                                 // Hidden once the drag has crossed onto a
@@ -291,6 +330,31 @@ fun HomePage(
                                 // elsewhere), so a plain ghost takes over in
                                 // LauncherScreen's own overlay instead.
                                 alpha = if (isDragging && currentPage() != pageIndex) 0f else 1f
+                            }
+                            // Consumes every touch-down landing on this
+                            // widget before the drag detector below (or the
+                            // page background's own long-press-to-open-menu
+                            // detector further up the tree) ever gets to it.
+                            // Without this, a long-press here and the
+                            // background's long-press are two independent
+                            // ~500ms timers racing on the same unconsumed
+                            // down event - neither sees the other, so
+                            // whichever coroutine the runtime happens to
+                            // resume first wins, alternating unpredictably
+                            // between "drag starts" and "settings menu
+                            // opens". Compose's own long-press detectors
+                            // (what backs the background's combinedClickable)
+                            // check for consumption on every event they
+                            // await and cancel themselves the instant they
+                            // see it, so consuming the down here reliably
+                            // rules the background out before its timer can
+                            // ever fire - detectDragGesturesAfterLongPress
+                            // below still recognizes its own long press fine
+                            // since it awaits with requireUnconsumed = false.
+                            .pointerInput(widget.appWidgetId) {
+                                awaitEachGesture {
+                                    awaitFirstDown().consume()
+                                }
                             }
                             // Keyed on the widget's own persisted position,
                             // not Unit - a pointerInput never restarts on
@@ -360,6 +424,41 @@ fun HomePage(
                                         drag.draggingWidgetId = null
                                         if (finalRow != null && (finalPage != widget.page || finalRow != widget.topRow)) {
                                             onWidgetMoved(widget.appWidgetId, finalPage, finalRow)
+                                        } else if (finalRow == null && finalPage == widget.page) {
+                                            // previewWidgetRow refused the
+                                            // drop outright because it lands
+                                            // on another widget's band - same
+                                            // treatment icons already get
+                                            // (displacedSlot) rather than
+                                            // just snapping back. Swapping
+                                            // bare topRow values (each widget
+                                            // keeps its own rowSpan) works
+                                            // for any pair of heights: the
+                                            // dragged widget lands exactly on
+                                            // the other's old row and the
+                                            // other lands exactly on the
+                                            // dragged widget's old row, so
+                                            // the two can never end up
+                                            // overlapping EACH OTHER - a
+                                            // widget in between (only
+                                            // possible with a taller pair
+                                            // swapping across a gap that had
+                                            // a third widget in it) is a
+                                            // corner case the swap doesn't
+                                            // try to resolve, matching how
+                                            // previewWidgetRow itself already
+                                            // treats any multi-widget
+                                            // collision as a refused drop
+                                            // rather than something to solve.
+                                            val other = overlappingWidget(
+                                                destWidgets, widget.appWidgetId,
+                                                drag.position.y - drag.draggingWidgetGrabOffsetY,
+                                                topPaddingPx, cellHeightPx, rows,
+                                                draggingRowSpan = widget.rowSpan
+                                            )
+                                            if (other != null) {
+                                                onWidgetsSwapped(widget.appWidgetId, other.appWidgetId)
+                                            }
                                         }
                                     },
                                     onDragCancel = {
@@ -432,6 +531,23 @@ fun HomePage(
                                     .size(40.dp, 20.dp)
                                     .clip(RoundedCornerShape(10.dp))
                                     .background(Color.White.copy(alpha = 0.85f))
+                                    // Same fix, same reason, as the widget's
+                                    // own Box above: this handle's offset
+                                    // pushes it partly/fully outside the
+                                    // widget Box's own bounds, so that
+                                    // consuming pointerInput (scoped to
+                                    // THOSE bounds) never sees a touch that
+                                    // lands here - without its own
+                                    // consumption, a long-press-and-hold on
+                                    // the handle raced the page background's
+                                    // long-press-menu detector exactly like
+                                    // the whole-widget case did, opening
+                                    // "Remove widget" instead of resizing.
+                                    .pointerInput(widget.appWidgetId) {
+                                        awaitEachGesture {
+                                            awaitFirstDown().consume()
+                                        }
+                                    }
                                     .pointerInput(widget.appWidgetId, widget.topRow, widget.rowSpan) {
                                         var startRowSpan = widget.rowSpan
                                         var accumulatedDy = 0f
@@ -465,10 +581,12 @@ fun HomePage(
                                                 if (finalSpan != widget.rowSpan) {
                                                     val widthDp = with(density) { (columns * cellWidthPx).toDp().value.toInt() }
                                                     val heightDp = with(density) { (finalSpan * cellHeightPx).toDp().value.toInt() }
-                                                    onWidgetResized(widget.appWidgetId, finalSpan, widthDp, heightDp)
+                                                    onWidgetResized(widget.appWidgetId, finalSpan, widget.columnSpan, widthDp, heightDp)
                                                 }
                                             },
-                                            onDragCancel = { drag.resizingWidgetId = null }
+                                            onDragCancel = {
+                                                drag.resizingWidgetId = null
+                                            }
                                         )
                                     }
                             )
@@ -499,6 +617,34 @@ fun HomePage(
 
             fun targetOffset(): Offset {
                 val bands = currentBands()
+                // Freezing only the fold candidate's own tile stops IT
+                // from being reflowed away, but does nothing to stop a
+                // DIFFERENT tile's own independent reflow math from
+                // landing ON that same now-frozen real slot - visually,
+                // some other icon slides in to cover the folder while
+                // it's pinned. That's not just cosmetic: it visibly moves
+                // the target out from under wherever the user is actually
+                // holding, which is very likely why folding kept failing
+                // intermittently regardless of drag direction - the user
+                // loses track of the real target and drifts off it for
+                // whole seconds at a time (confirmed on-device: hoverTarget
+                // logs showed multi-second gaps, not single-frame jitter).
+                // An existing FOLDER is an unambiguous target (unlike an
+                // app+app pair, where the wide dwell zone deliberately
+                // needs live insert-preview elsewhere on the page - see
+                // displacedSlot's own foldSlotShifted/target.gap narrowing,
+                // and the "middle icons won't split to insert" regression
+                // from freezing that case too broadly), so pin the WHOLE
+                // page's reflow, not just this one tile, whenever the live
+                // hover target is specifically an existing folder.
+                val hoverSlot = (drag.hoverTarget as? HomeLocation.Page)?.takeIf { it.page == pageIndex }?.slot
+                val hoveringExistingFolder = hoverSlot != null && items.getOrNull(hoverSlot) is HomeItem.FolderItem
+                if (drag.hoverTarget == thisLocation || hoveringExistingFolder) {
+                    return Offset(
+                        (slot % columns) * cellWidthPx,
+                        toGridY(topPaddingPx + (slot / columns) * cellHeightPx, topPaddingPx, cellHeightPx, bands)
+                    )
+                }
                 val display = displacedSlot(
                     slot = slot,
                     items = items,
@@ -852,6 +998,15 @@ private fun displacedSlot(
     topPaddingPx: Float,
     bands: List<IntRange> = emptyList()
 ): Int {
+    // NOTE: tried gating this on `drag.hoverTarget == null` too (suppress
+    // ALL reflow preview for the whole hover, not just once folderArmed) to
+    // fix a same-page cross-row fold flicker - reverted, since it bypassed
+    // the foldSlotShifted/target.gap narrowing below entirely (the same
+    // fix this file already has for the adjacent "two icons glued
+    // together, can't insert between them" bug - see that comment), which
+    // regressed as "middle icons won't split to insert" for ordinary
+    // non-fold drags. If the cross-row flicker needs revisiting, it has to
+    // work WITH that narrowing, not bypass it wholesale.
     val previewing = drag.active && !drag.folderArmed &&
         !drag.overDock && !drag.overRemoveZone && currentPage == pageIndex
     if (!previewing) return slot
@@ -1160,6 +1315,35 @@ internal fun previewWidgetRow(
             other.topRow < candidateRange.last + 1
     }
     return if (collides) null else candidateRow
+}
+
+/**
+ * The single widget standing in the way of a drop [previewWidgetRow] just
+ * refused, if there's exactly one - null if the drop actually landed clear,
+ * or if it overlaps more than one widget's band (no defined swap for that).
+ * Shares [previewWidgetRow]'s own row-from-position math so the two always
+ * agree on where the drop would land.
+ */
+internal fun overlappingWidget(
+    widgetsOnPage: List<PlacedWidget>,
+    draggingId: Int?,
+    positionY: Float,
+    topPaddingPx: Float,
+    cellHeightPx: Float,
+    rows: Int,
+    draggingRowSpan: Int
+): PlacedWidget? {
+    val maxRow = (rows - draggingRowSpan).coerceAtLeast(0)
+    val candidateRow = ((positionY - topPaddingPx) / cellHeightPx)
+        .roundToInt()
+        .coerceIn(0, maxRow)
+    val candidateRange = candidateRow until (candidateRow + draggingRowSpan)
+    val overlapping = widgetsOnPage.filter { other ->
+        other.appWidgetId != draggingId &&
+            candidateRange.first < other.topRow + other.rowSpan &&
+            other.topRow < candidateRange.last + 1
+    }
+    return overlapping.singleOrNull()
 }
 
 private const val FOLDER_ZONE_START = 0.2f

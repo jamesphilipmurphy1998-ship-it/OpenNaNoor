@@ -123,6 +123,7 @@
 
         <receiver
             android:name=".widget.ClockWidgetProvider"
+            android:label="@string/clock_widget_label"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />

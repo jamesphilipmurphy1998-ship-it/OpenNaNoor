@@ -32,9 +32,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -457,6 +460,15 @@ private fun NowPlayingRow() {
     var title by remember { mutableStateOf<String?>(null) }
     var artist by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf(false) }
+    // Duration and the PlaybackState this position/speed/updateTime came
+    // from - NOT a live position itself. MediaSession doesn't push a tick
+    // every second while playing; it only reports position at a reference
+    // time (getLastPositionUpdateTime) plus a playback speed, and expects
+    // observers to interpolate forward from that themselves (the same
+    // model every real "Now Playing" progress bar uses) - see the
+    // LaunchedEffect below that actually advances the displayed position.
+    var duration by remember { mutableStateOf(0L) }
+    var playbackState by remember { mutableStateOf<android.media.session.PlaybackState?>(null) }
 
     fun pickController(): android.media.session.MediaController? {
         val sessions = runCatching { sessionManager?.getActiveSessions(componentName) }.getOrNull().orEmpty()
@@ -472,6 +484,8 @@ private fun NowPlayingRow() {
     fun refreshFrom(c: android.media.session.MediaController?) {
         title = c?.metadata?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE)
         artist = c?.metadata?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST)
+        duration = c?.metadata?.getLong(android.media.MediaMetadata.METADATA_KEY_DURATION) ?: 0L
+        playbackState = c?.playbackState
         playing = c?.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING
     }
 
@@ -504,58 +518,146 @@ private fun NowPlayingRow() {
     val trackTitle = title
     if (trackTitle.isNullOrBlank()) return
 
-    Row(
+    // MediaSession doesn't push a tick every second while playing - a
+    // PlaybackState only reports position at a reference time
+    // (getLastPositionUpdateTime) plus a playback speed, and expects
+    // observers to interpolate forward from that themselves (the same
+    // model every real "Now Playing" progress bar uses). nowMs is that
+    // interpolation clock, only ticking while actually playing - paused
+    // stays perfectly still rather than a wall-clock timer needlessly
+    // recomposing this row every half second for nothing.
+    var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(playing) {
+        while (playing) {
+            nowMs = System.currentTimeMillis()
+            kotlinx.coroutines.delay(500)
+        }
+    }
+    val positionMs = remember(playbackState, nowMs) {
+        val state = playbackState ?: return@remember 0L
+        if (state.state == android.media.session.PlaybackState.STATE_PLAYING) {
+            val elapsed = nowMs - state.lastPositionUpdateTime
+            (state.position + (elapsed * state.playbackSpeed)).toLong()
+        } else {
+            state.position
+        }.coerceIn(0L, if (duration > 0) duration else Long.MAX_VALUE)
+    }
+
+    Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
             .background(Color.Black.copy(alpha = 0.05f))
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                trackTitle,
-                color = controlCenterContentColor,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1
-            )
-            if (!artist.isNullOrBlank()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(
+                Modifier
+                    .weight(1f)
+                    .clickable {
+                        // controller.packageName is the session owner's own
+                        // package (Spotify, say) - not necessarily the
+                        // foreground app, since a session can still be
+                        // "active" (and shown here) while its app is
+                        // backgrounded.
+                        val pkg = controller?.packageName ?: return@clickable
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                        if (launchIntent != null) {
+                            runCatching { context.startActivity(launchIntent) }
+                        }
+                    }
+            ) {
                 Text(
-                    artist.orEmpty(),
-                    color = controlCenterContentColor.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.labelSmall,
+                    trackTitle,
+                    color = controlCenterContentColor,
+                    style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1
+                )
+                if (!artist.isNullOrBlank()) {
+                    Text(
+                        artist.orEmpty(),
+                        color = controlCenterContentColor.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1
+                    )
+                }
+            }
+            Icon(
+                imageVector = Icons.Filled.SkipPrevious,
+                contentDescription = "Previous",
+                tint = controlCenterContentColor,
+                modifier = Modifier.clickable {
+                    controller?.transportControls?.skipToPrevious()
+                }
+            )
+            Icon(
+                imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                contentDescription = if (playing) "Pause" else "Play",
+                tint = controlCenterContentColor,
+                modifier = Modifier
+                    .clickable {
+                        val transport = controller?.transportControls ?: return@clickable
+                        if (playing) transport.pause() else transport.play()
+                    }
+            )
+            Icon(
+                imageVector = Icons.Filled.SkipNext,
+                contentDescription = "Next",
+                tint = controlCenterContentColor,
+                modifier = Modifier.clickable {
+                    controller?.transportControls?.skipToNext()
+                }
+            )
+        }
+        // Only a session that actually reports a real duration gets a bar -
+        // some sessions (a live radio stream, say) report 0 or a negative
+        // sentinel, where a progress fraction is meaningless.
+        if (duration > 0) {
+            Spacer(Modifier.height(8.dp))
+            val progress = (positionMs.toFloat() / duration.toFloat()).coerceIn(0f, 1f)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(controlCenterContentColor.copy(alpha = 0.15f))
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(progress)
+                        .fillMaxHeight()
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(controlCenterContentColor.copy(alpha = 0.85f))
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    formatDuration(positionMs),
+                    color = controlCenterContentColor.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Text(
+                    formatDuration(duration),
+                    color = controlCenterContentColor.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall
                 )
             }
         }
-        Icon(
-            imageVector = Icons.Filled.SkipPrevious,
-            contentDescription = "Previous",
-            tint = controlCenterContentColor,
-            modifier = Modifier.clickable {
-                controller?.transportControls?.skipToPrevious()
-            }
-        )
-        Icon(
-            imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-            contentDescription = if (playing) "Pause" else "Play",
-            tint = controlCenterContentColor,
-            modifier = Modifier
-                .clickable {
-                    val transport = controller?.transportControls ?: return@clickable
-                    if (playing) transport.pause() else transport.play()
-                }
-        )
-        Icon(
-            imageVector = Icons.Filled.SkipNext,
-            contentDescription = "Next",
-            tint = controlCenterContentColor,
-            modifier = Modifier.clickable {
-                controller?.transportControls?.skipToNext()
-            }
-        )
     }
+}
+
+/** "m:ss", matching how every stock media player formats a track position -
+ *  no hours segment, since a track running over an hour is rare enough
+ *  not to be worth the extra "0:" noise on every normal one. */
+private fun formatDuration(ms: Long): String {
+    val totalSeconds = (ms / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(minutes, seconds)
 }
 
 /** Opens the device's default calculator app - CATEGORY_APP_CALCULATOR is

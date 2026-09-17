@@ -2,117 +2,156 @@
 <!-- RemoteViews only supports a small fixed set of layout/view classes, no
      Compose - a fixed stack of up to 4 rows, each hidden (GONE) when the
      widget has fewer cities configured than rows, is the simplest layout
-     that still copes with a variable-length city list. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@android:id/background"
+     that still copes with a variable-length city list.
+
+     Root is a FrameLayout so an optional user-picked background image
+     (clock_bg_image, GONE until one's set - see ClockWidgetStore's own
+     background-image file) can sit BEHIND the content instead of replacing
+     it. clock_scrim (the old root LinearLayout) keeps the same solid dark
+     background by default; when a background image is set,
+     ClockWidgetProvider swaps its color to a much lighter scrim via
+     RemoteViews' setInt("setBackgroundColor", ...) so the photo stays
+     visible while text stays readable - fine for clock_scrim to stay a
+     plain rectangular ColorDrawable here, since the ROOT's own clip
+     (below) rounds the whole composite regardless of any one child's own
+     background shape.
+
+     Rounded corners: outlineProvider="background" + clipToOutline="true"
+     on this root, sourced from clock_widget_mask's own rounded-rect shape,
+     clips every child (image, scrim, text) to it. This is real native View
+     clipping happening INSIDE the widget's own RemoteViews-inflated
+     hierarchy - a completely different thing from a Compose AndroidView
+     wrapper trying to clip an opaque hosted view from OUTSIDE, which is
+     the approach that failed repeatedly for a third-party widget (see
+     HomePage's own "Rounding this view's corners is unresolved" comment,
+     which doesn't apply here: this app owns and inflates this layout, so
+     there's no opaque foreign view to fight. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:background="#CC1C1C1E"
-    android:padding="14dp">
+    android:background="@drawable/clock_widget_mask"
+    android:outlineProvider="background"
+    android:clipToOutline="true">
 
-    <LinearLayout
-        android:id="@+id/clock_row_0"
+    <ImageView
+        android:id="@+id/clock_bg_image"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingBottom="4dp">
-        <TextView
-            android:id="@+id/clock_label_0"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:ellipsize="end"
-            android:maxLines="1" />
-        <TextView
-            android:id="@+id/clock_time_0"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/clock_row_1"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingBottom="4dp">
-        <TextView
-            android:id="@+id/clock_label_1"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:ellipsize="end"
-            android:maxLines="1" />
-        <TextView
-            android:id="@+id/clock_time_1"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/clock_row_2"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingBottom="4dp">
-        <TextView
-            android:id="@+id/clock_label_2"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:ellipsize="end"
-            android:maxLines="1" />
-        <TextView
-            android:id="@+id/clock_time_2"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <LinearLayout
-        android:id="@+id/clock_row_3"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-        <TextView
-            android:id="@+id/clock_label_3"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:ellipsize="end"
-            android:maxLines="1" />
-        <TextView
-            android:id="@+id/clock_time_3"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="#FFFFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <TextView
-        android:id="@+id/clock_empty_hint"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Tap to add a city"
-        android:textColor="#B3FFFFFF"
-        android:textSize="13sp"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
         android:visibility="gone" />
 
-</LinearLayout>
+    <LinearLayout
+        android:id="@+id/clock_scrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:background="#CC1C1C1E"
+        android:padding="14dp">
+
+        <LinearLayout
+            android:id="@+id/clock_row_0"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="4dp">
+            <TextView
+                android:id="@+id/clock_label_0"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:ellipsize="end"
+                android:maxLines="1" />
+            <TextView
+                android:id="@+id/clock_time_0"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/clock_row_1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="4dp">
+            <TextView
+                android:id="@+id/clock_label_1"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:ellipsize="end"
+                android:maxLines="1" />
+            <TextView
+                android:id="@+id/clock_time_1"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/clock_row_2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="4dp">
+            <TextView
+                android:id="@+id/clock_label_2"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:ellipsize="end"
+                android:maxLines="1" />
+            <TextView
+                android:id="@+id/clock_time_2"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/clock_row_3"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+            <TextView
+                android:id="@+id/clock_label_3"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:ellipsize="end"
+                android:maxLines="1" />
+            <TextView
+                android:id="@+id/clock_time_3"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/clock_empty_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Tap to add a city"
+            android:textColor="#B3FFFFFF"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+    </LinearLayout>
+
+</FrameLayout>

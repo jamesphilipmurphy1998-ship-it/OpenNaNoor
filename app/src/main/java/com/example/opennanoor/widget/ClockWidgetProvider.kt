@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
+import android.graphics.BitmapFactory
 import android.os.SystemClock
 import android.widget.RemoteViews
 import com.example.opennanoor.R
@@ -105,6 +106,7 @@ class ClockWidgetProvider : AppWidgetProvider() {
                 Triple(R.id.clock_row_3, R.id.clock_label_3, R.id.clock_time_3)
             )
             val formatter = DateTimeFormatter.ofPattern("h:mm a", Locale.getDefault())
+            val textColor = ClockWidgetStore.textColorFor(context, appWidgetId)
             rowIds.forEachIndexed { index, (rowId, labelId, timeId) ->
                 val city = cities.getOrNull(index)
                 if (city == null) {
@@ -112,6 +114,8 @@ class ClockWidgetProvider : AppWidgetProvider() {
                 } else {
                     views.setViewVisibility(rowId, android.view.View.VISIBLE)
                     views.setTextViewText(labelId, city.label)
+                    views.setTextColor(labelId, textColor)
+                    views.setTextColor(timeId, textColor)
                     val now = runCatching {
                         java.time.ZonedDateTime.now(ZoneId.of(city.zoneId)).format(formatter)
                     }.getOrDefault("--:--")
@@ -122,6 +126,32 @@ class ClockWidgetProvider : AppWidgetProvider() {
                 R.id.clock_empty_hint,
                 if (cities.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
             )
+            views.setTextColor(R.id.clock_empty_hint, textColor)
+
+            // Three states, not two: a user-picked background photo (see
+            // ClockWidgetStore's own backgroundImageFile) sits behind
+            // clock_scrim, whose color switches to a much lighter overlay
+            // so the photo stays visible; "No background"
+            // (backgroundTransparentFor) makes clock_scrim genuinely
+            // transparent rather than falling back to the solid default -
+            // that fallback was the actual bug report ("no background
+            // makes it black"), since the default IS a near-black solid.
+            // Only with neither set does the solid #CC1C1C1E default apply.
+            val transparent = ClockWidgetStore.backgroundTransparentFor(context, appWidgetId)
+            val bgFile = ClockWidgetStore.backgroundImageFile(context, appWidgetId)
+            val backgroundBitmap = if (transparent) null else bgFile.takeIf { it.exists() }
+                ?.let { BitmapFactory.decodeFile(it.path) }
+            if (backgroundBitmap != null) {
+                views.setImageViewBitmap(R.id.clock_bg_image, backgroundBitmap)
+                views.setViewVisibility(R.id.clock_bg_image, android.view.View.VISIBLE)
+                views.setInt(R.id.clock_scrim, "setBackgroundColor", 0x40000000)
+            } else if (transparent) {
+                views.setViewVisibility(R.id.clock_bg_image, android.view.View.GONE)
+                views.setInt(R.id.clock_scrim, "setBackgroundColor", 0x00000000)
+            } else {
+                views.setViewVisibility(R.id.clock_bg_image, android.view.View.GONE)
+                views.setInt(R.id.clock_scrim, "setBackgroundColor", 0xCC1C1C1E.toInt())
+            }
 
             // Deliberately NOT wired to a click-to-reconfigure PendingIntent
             // across the widget's own background any more - this launcher

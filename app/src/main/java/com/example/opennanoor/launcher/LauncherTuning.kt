@@ -81,6 +81,10 @@ internal const val MINI_PREVIEW_ORIGIN_Y =
 
 internal const val BLUR_RADIUS_PX = 45f
 internal const val HOVER_DEBOUNCE_MS = 80L
+/** How long a hover flickering back to null is tolerated before actually
+ *  cancelling an in-progress fold dwell - see LauncherScreen's own arm
+ *  LaunchedEffect for why this is longer than [HOVER_DEBOUNCE_MS]. */
+internal const val NULL_HOVER_DEBOUNCE_MS = 300L
 internal val DOCK_AREA_HEIGHT = 96.dp
 internal val GHOST_SIZE = 72.dp
 internal const val GHOST_SCALE = 1.12f
