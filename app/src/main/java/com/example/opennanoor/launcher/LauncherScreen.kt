@@ -740,16 +740,7 @@ fun LauncherScreen(
                 modifier = Modifier
                     .weight(1f)
                     .onGloballyPositioned { pagerSizePx = it.size }
-                    .pointerInput(cellWidthPx, cellHeightPx, state.columns) {
-                        // Two icon-widths in from the right edge, two icon-
-                        // heights down from the top - scales with whatever
-                        // this page's own icon size actually is (column
-                        // count, screen size) rather than a fixed dp zone
-                        // that would read as generous on one layout and
-                        // cramped on another.
-                        val iconSizePx = with(density) {
-                            pageIconSize(state.columns, cellWidthPx.toDp(), cellHeightPx.toDp()).toPx()
-                        }
+                    .pointerInput(Unit) {
                         // Which of search/Control Center a downward drag
                         // means is decided once, from where it STARTED -
                         // not re-checked as the finger moves, so a swipe
@@ -785,20 +776,24 @@ fun LauncherScreen(
                                 // will actually appear, and stays that way
                                 // however its size changes. Before the panel
                                 // has ever been measured (before its first
-                                // open) there's nothing to match yet, so
-                                // this falls back to the same icon-size
-                                // guess it always used. Height reaching the
-                                // panel's own top is fine even though that
-                                // includes some genuinely untouchable space
-                                // right at the true top edge (the system
-                                // status bar's own pulldown owns that
-                                // regardless of what this zone claims) -
-                                // it's simply unreachable in practice, not a
-                                // conflict with anything this app controls.
+                                // open), the fallback below deliberately
+                                // uses only `size` - this pointerInput's own
+                                // measured box, valid from its very first
+                                // frame - rather than the page grid's
+                                // cellWidthPx/cellHeightPx. Those start as
+                                // rough guesses and get corrected a moment
+                                // after first layout (most noticeably right
+                                // after unlock), and this pointerInput used
+                                // to be keyed on them - a correction mid-
+                                // gesture restarted the whole gesture
+                                // detector out from under a fast swipe that
+                                // landed in that window, and it fell
+                                // through to search instead. Not keying on
+                                // them at all removes that race entirely.
                                 val zoneWidth = if (controlCenterWidthPx > 0f) controlCenterWidthPx
                                     else size.width * CONTROL_CENTER_WIDTH_FRACTION
                                 val zoneHeight = if (controlCenterHeightPx > 0f) controlCenterHeightPx
-                                    else iconSizePx * 3
+                                    else size.height * 0.2f
                                 startedInControlZone = offset.x > size.width - zoneWidth &&
                                     offset.y < zoneHeight
                                 totalDrag = 0f
