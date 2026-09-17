@@ -228,7 +228,7 @@ private fun ToggleTile(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(if (on) Color.Black.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.05f))
+            .background(if (on) Color.Black.copy(alpha = 0.24f) else Color.Black.copy(alpha = 0.05f))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -337,7 +337,7 @@ private fun AirplaneModeButton(modifier: Modifier = Modifier) {
     Column(
         modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(if (on) controlCenterContentColor.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.05f))
+            .background(if (on) Color.Black.copy(alpha = 0.24f) else Color.Black.copy(alpha = 0.05f))
             .clickable {
                 val next = !on
                 // The setting write is what actually flips the radios (the
