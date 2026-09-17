@@ -101,7 +101,7 @@ fun LauncherScreen(
     // - shown via AndroidView, positioned per-widget (see HomePage's own
     // widget block).
     widgets: List<PlacedWidget> = emptyList(),
-    onAddWidget: () -> Unit = {},
+    onAddWidget: (page: Int) -> Unit = {},
     onRemoveWidget: (appWidgetId: Int) -> Unit = {},
     onWidgetMoved: (appWidgetId: Int, page: Int, row: Int) -> Unit = { _, _, _ -> },
     onWidgetResized: (appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
@@ -1010,7 +1010,7 @@ fun LauncherScreen(
                 },
                 onAddWidget = {
                     showHomeMenu = false
-                    onAddWidget()
+                    onAddWidget(pagerState.currentPage)
                 },
                 onDismiss = { showHomeMenu = false }
             )

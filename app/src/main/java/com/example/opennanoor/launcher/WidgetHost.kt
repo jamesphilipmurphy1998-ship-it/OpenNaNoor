@@ -66,6 +66,16 @@ class WidgetHostController(
     private var pickLauncher: ((Intent) -> Unit)? = null
     private var configureLauncher: ((Intent) -> Unit)? = null
 
+    // Which page to land the widget on once picking (and possibly
+    // configuring) finishes - captured at startPick() time, since that's
+    // the only point this controller is ever told which page the user was
+    // actually looking at. The whole pick/configure flow is async (it
+    // leaves this app entirely for the system picker, sometimes a
+    // provider's own configure screen too), so it can't just read
+    // "the current page" fresh when finishBinding finally runs - there's
+    // no current page to read from out there.
+    private var pendingPage: Int = 0
+
     fun attachLaunchers(
         pick: (Intent) -> Unit,
         configure: (Intent) -> Unit
@@ -137,8 +147,11 @@ class WidgetHostController(
         placedWidgets = restored
     }
 
-    /** Starts the pick flow - a system chooser over every installed widget. */
-    fun startPick() {
+    /** Starts the pick flow - a system chooser over every installed widget.
+     *  [page] is whichever page the user was actually looking at when they
+     *  asked for a widget - see [pendingPage]. */
+    fun startPick(page: Int) {
+        pendingPage = page
         val appWidgetId = appWidgetHost.allocateAppWidgetId()
         val intent = Intent(AppWidgetManager.ACTION_APPWIDGET_PICK).apply {
             putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
@@ -196,17 +209,18 @@ class WidgetHostController(
     }
 
     private fun finishBinding(appWidgetId: Int, info: AppWidgetProviderInfo) {
-        // Always lands on page 0 first, stacking right under whichever
-        // widget already there currently reaches lowest - a sensible
-        // starting spot for a newly added one, free to drag anywhere
-        // (including to a different page) afterwards same as any other.
-        val nextRow = settings.widgetPlacements
-            .filter { it.page == 0 }
-            .maxOfOrNull { it.topRow + it.rowSpan } ?: 0
-        val placement = WidgetPlacement(appWidgetId, page = 0, topRow = nextRow, rowSpan = WIDGET_RESERVED_ROWS)
+        // Lands at the very top of whichever page the user was actually on
+        // (pendingPage) - free to drag anywhere else (including a
+        // different page, or further down the same one) afterwards same as
+        // any other widget. Doesn't yet push whatever icons/widgets were
+        // already occupying that top row out of the way - it can land
+        // overlapping them for now, same as any other reflow gap this app
+        // doesn't yet resolve automatically.
+        val page = pendingPage
+        val placement = WidgetPlacement(appWidgetId, page = page, topRow = 0, rowSpan = WIDGET_RESERVED_ROWS)
         settings.widgetPlacements = settings.widgetPlacements + placement
         placedWidgets = placedWidgets + PlacedWidget(
-            appWidgetId, createHostView(appWidgetId, info), 0, nextRow, WIDGET_RESERVED_ROWS, minHeightDpFor(info)
+            appWidgetId, createHostView(appWidgetId, info), page, 0, WIDGET_RESERVED_ROWS, minHeightDpFor(info)
         )
     }
 

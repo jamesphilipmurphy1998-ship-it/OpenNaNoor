@@ -77,7 +77,7 @@ class LauncherActivity : ComponentActivity() {
                     },
                     onOpenSettings = { openSettings() },
                     widgets = widgetHost.placedWidgets,
-                    onAddWidget = { widgetHost.startPick() },
+                    onAddWidget = { page -> widgetHost.startPick(page) },
                     onRemoveWidget = { id -> widgetHost.removeWidget(id); vm.refreshSettingsIfChanged() },
                     onWidgetMoved = { id, page, row ->
                         widgetHost.setWidgetPlacement(id, page, row)
