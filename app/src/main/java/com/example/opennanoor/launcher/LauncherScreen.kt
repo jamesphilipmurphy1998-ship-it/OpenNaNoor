@@ -257,7 +257,7 @@ fun LauncherScreen(
                     pageWidgets,
                     overrideId = draggingId,
                     overrideTopRow = previewWidgetRow(
-                        pageWidgets, draggingId, drag.position.y, topPaddingPx, cellHeightPx, state.rows
+                        pageWidgets, draggingId, drag.position.y - drag.draggingWidgetGrabOffsetY, topPaddingPx, cellHeightPx, state.rows
                     )
                 )
             }
@@ -927,7 +927,7 @@ fun LauncherScreen(
                     .offset {
                         IntOffset(
                             0,
-                            (drag.position.y - (WIDGET_RESERVED_ROWS * cellHeightPx) / 2f).toInt()
+                            (drag.position.y - drag.draggingWidgetGrabOffsetY).toInt()
                         )
                     }
                     .size(

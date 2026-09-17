@@ -79,6 +79,16 @@ class DragCoordinator {
      *  over showing where it's headed instead. */
     var draggingWidgetOriginPage by mutableStateOf(0)
 
+    /** How far below the widget's own top edge the finger actually grabbed
+     *  it, in px - captured once in onDragStart and held fixed for the rest
+     *  of that gesture, so the widget can be rendered at exactly
+     *  `position.y - draggingWidgetGrabOffsetY` and stay under the finger
+     *  the whole drag, rather than always recentring on it (which visibly
+     *  snapped the widget away from wherever it was actually held the
+     *  instant a drag not started dead centre began moving). Lives here for
+     *  the same D8-dexing reason as draggingWidgetId above. */
+    var draggingWidgetGrabOffsetY by mutableStateOf(0f)
+
     val active: Boolean get() = item != null
 
     /** True when this drag began in the drawer rather than on a home slot. */

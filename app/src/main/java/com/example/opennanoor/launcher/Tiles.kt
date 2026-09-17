@@ -129,7 +129,7 @@ private val PAGE_6_ICON_SIZE = 50.dp
 private val PAGE_5_ICON_SIZE = 64.dp
 
 /** Roughly the label's own text line plus the tile Column's vertical padding. */
-private val PAGE_LABEL_RESERVE = 26.dp
+internal val PAGE_LABEL_RESERVE = 26.dp
 private val PAGE_ICON_MIN_SIZE = 24.dp
 private const val PAGE_BASELINE_COLUMNS = 4
 

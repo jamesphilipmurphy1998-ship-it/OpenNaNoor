@@ -125,6 +125,20 @@ fun HomePage(
         val topPaddingPx = with(density) { topPadding.toPx() }
         val iconSize = pageIconSize(columns, cellWidth, cellHeight)
 
+        // The icon's actual long-press-to-drag hit target - see its own
+        // pointerInput below for why this is smaller than the full cell.
+        // A little wider/taller than the icon+label footprint itself
+        // (PAGE_LABEL_RESERVE covers the label's own line) so it's still a
+        // comfortable target, just not the whole cell.
+        val touchTargetWidth = (iconSize + 20.dp).coerceAtMost(cellWidth)
+        val touchTargetHeight = (iconSize + PAGE_LABEL_RESERVE + 12.dp).coerceAtMost(cellHeight)
+        val touchTargetInset = with(density) {
+            Offset(
+                ((cellWidth - touchTargetWidth) / 2f).toPx(),
+                ((cellHeight - touchTargetHeight) / 2f).toPx()
+            )
+        }
+
         // Every widget committed to THIS page specifically - collision
         // checks during a drag still need to see widgets on OTHER pages
         // too (see previewWidgetRow's own callers), which is why the raw,
@@ -163,7 +177,7 @@ fun HomePage(
                     pageWidgets,
                     overrideId = draggingId,
                     overrideTopRow = previewWidgetRow(
-                        pageWidgets, draggingId, drag.position.y, topPaddingPx, cellHeightPx, rows
+                        pageWidgets, draggingId, drag.position.y - drag.draggingWidgetGrabOffsetY, topPaddingPx, cellHeightPx, rows
                     )
                 )
             }
@@ -186,7 +200,16 @@ fun HomePage(
                         Modifier
                             .offset {
                                 val y = if (isDragging) {
-                                    drag.position.y - (WIDGET_RESERVED_ROWS * cellHeightPx) / 2f
+                                    // Rendered under exactly where the
+                                    // finger grabbed it (see
+                                    // draggingWidgetGrabOffsetY's own
+                                    // comment), not recentred on the touch -
+                                    // a widget picked up near its bottom
+                                    // edge stays held there the whole drag
+                                    // instead of visibly snapping to be
+                                    // centred on the finger the instant it
+                                    // starts moving.
+                                    drag.position.y - drag.draggingWidgetGrabOffsetY
                                 } else {
                                     animatedY.value
                                 }
@@ -214,10 +237,18 @@ fun HomePage(
                                         onEnterEditing()
                                         drag.draggingWidgetId = widget.appWidgetId
                                         drag.draggingWidgetOriginPage = pageIndex
+                                        // touch is local to this Box, so its
+                                        // own y is already exactly how far
+                                        // below the widget's top edge the
+                                        // finger landed - held onto for the
+                                        // rest of the gesture so the render
+                                        // above can keep the widget under
+                                        // that same point instead of its
+                                        // centre.
+                                        drag.draggingWidgetGrabOffsetY = touch.y
                                         drag.position = Offset(
                                             touch.x,
-                                            topPaddingPx + widget.topRow * cellHeightPx +
-                                                WIDGET_RESERVED_ROWS * cellHeightPx / 2f
+                                            topPaddingPx + widget.topRow * cellHeightPx + touch.y
                                         )
                                     },
                                     onDrag = { change, amount ->
@@ -451,45 +482,6 @@ fun HomePage(
                         val p = animatedOffset.value
                         androidx.compose.ui.unit.IntOffset(p.x.toInt(), p.y.toInt())
                     }
-                    // Keyed on this cell's identity plus what's actually in
-                    // it. Position alone was wrong: once a fold or a drop
-                    // elsewhere reshuffled which item sits at this slot, the
-                    // still-running coroutine from before that reshuffle kept
-                    // using its original, now-stale item - so picking up the
-                    // new occupant showed the ghost of whatever used to be
-                    // there and never resolved as a real drag of the new one.
-                    // Keying on `editing` (or the whole item list) was ALSO
-                    // wrong the other way - tore the detector down and
-                    // restarted it the instant a drag began, since editing
-                    // flips true inside onDragStart, killing the drag before
-                    // a single move event landed. item.id changes only
-                    // between gestures, never mid-one, so it avoids both.
-                    .pointerInput(pageIndex, slot, item.id) {
-                        detectDragGesturesAfterLongPress(
-                            // targetOffset() alone is this cell's top-left
-                            // corner - starting the ghost there rather than
-                            // where the finger actually pressed within the
-                            // cell was what made it pop up to one side
-                            // instead of centred under the touch. Adding the
-                            // local touch point (onDragStart's own offset)
-                            // gives the drag its true starting position in
-                            // the shared frame every other calculation here
-                            // already assumes it's in.
-                            onDragStart = { touch ->
-                                drag.start(
-                                    item = item,
-                                    origin = HomeLocation.Page(pageIndex, slot),
-                                    startPosition = targetOffset() + touch
-                                )
-                            },
-                            onDrag = { change, amount ->
-                                change.consume()
-                                onDragMoved(amount)
-                            },
-                            onDragEnd = onDragEnded,
-                            onDragCancel = onDragEnded
-                        )
-                    }
             ) {
                 // Computed here, once, rather than inside HomeItemTile as
                 // before - the remove badge needs to wobble as ONE rigid
@@ -527,9 +519,68 @@ fun HomePage(
                     // once did. The dwell-to-fold behaviour itself is
                     // unaffected - it's gated at drop time in LauncherScreen,
                     // not here.
+                    // Sized to just the icon+label footprint - touchTargetWidth/
+                    // Height, computed above - not the full cell. The cell
+                    // itself is much wider than the icon it holds (room for
+                    // a comfortable grid at every column count), and this
+                    // Box carries BOTH the tap-to-launch click below and the
+                    // long-press-to-drag pointerInput after it. Both used to
+                    // sit on the full cell instead, so what looked like
+                    // blank page space between icons was actually still
+                    // inside a neighbouring icon's own touch target -
+                    // holding it either launched that icon or picked it up
+                    // to drag, instead of falling through to the page
+                    // background's own long-press (the Wallpaper/Widgets/
+                    // Home settings menu) the way real blank space does -
+                    // "tap and hold on a blank area... seems to select the
+                    // nearest icon".
+                    // The pointerInput here (not on a separate sibling Box)
+                    // is deliberate - an earlier version put the long-press-
+                    // drag detector on its own sibling Box exactly
+                    // overlapping this one, and that silently broke plain
+                    // taps everywhere on the page: two SIBLING pointerInput
+                    // regions racing for the same touch isn't how this
+                    // worked before (the old, working version had the drag
+                    // detector on an ANCESTOR of HomeItemTile's own click,
+                    // not a sibling of it), and Compose's gesture
+                    // arbitration between overlapping siblings doesn't
+                    // reliably let both fire. Keeping the same
+                    // ancestor/descendant relationship the original full-
+                    // cell version had - just at this smaller size - is
+                    // what actually keeps both gestures working.
                     Box(
-                        Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+                        Modifier
+                            .align(Alignment.Center)
+                            .size(touchTargetWidth, touchTargetHeight)
+                            .pointerInput(pageIndex, slot, item.id) {
+                                detectDragGesturesAfterLongPress(
+                                    // targetOffset() alone is this cell's
+                                    // top-left corner - starting the ghost
+                                    // there rather than where the finger
+                                    // actually pressed was what made it pop
+                                    // up to one side instead of centred
+                                    // under the touch. touch is local to
+                                    // THIS smaller, centred box, so its own
+                                    // top-left corner - touchTargetInset
+                                    // below - has to be added back in first
+                                    // to land the same true point this used
+                                    // to when the detector sat on the full
+                                    // cell.
+                                    onDragStart = { touch ->
+                                        drag.start(
+                                            item = item,
+                                            origin = HomeLocation.Page(pageIndex, slot),
+                                            startPosition = targetOffset() + touchTargetInset + touch
+                                        )
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        onDragMoved(amount)
+                                    },
+                                    onDragEnd = onDragEnded,
+                                    onDragCancel = onDragEnded
+                                )
+                            }
                     ) {
                         HomeItemTile(
                             item = item,
