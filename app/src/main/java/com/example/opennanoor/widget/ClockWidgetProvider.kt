@@ -123,20 +123,20 @@ class ClockWidgetProvider : AppWidgetProvider() {
                 if (cities.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
             )
 
-            // Tapping the widget (when it has nothing configured yet, or
-            // any time after) reopens the same config screen to add/change
-            // cities - EXTRA_APPWIDGET_ID tells the config activity which
-            // instance it's editing, same as the system hands it on first
-            // placement.
-            val configIntent = Intent(context, ClockWidgetConfigActivity::class.java).apply {
-                putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
-            val configPendingIntent = PendingIntent.getActivity(
-                context, appWidgetId, configIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            views.setOnClickPendingIntent(android.R.id.background, configPendingIntent)
+            // Deliberately NOT wired to a click-to-reconfigure PendingIntent
+            // across the widget's own background any more - this launcher
+            // already learned the hard way (see HomePage's own RemoveBadge
+            // comment) that a click target spanning an AppWidgetHostView's
+            // full bounds is a real native View with its own touch
+            // dispatch, and it claims touches landing anywhere in that
+            // rectangle before Compose's overlay handles (like this
+            // widget's own resize grip, positioned right at its bottom
+            // edge) ever get a chance to - "can't resize it" was this
+            // widget's version of the exact bug that comment describes.
+            // Re-picking cities for now means removing and re-adding the
+            // widget; a dedicated way to reopen the config screen (e.g.
+            // from the widget's own options menu) is better future work
+            // than reintroducing this.
 
             manager.updateAppWidget(appWidgetId, views)
         }
