@@ -16,6 +16,8 @@ import android.content.Intent
 import android.hardware.camera2.CameraManager
 import android.net.Uri
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -47,6 +49,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -149,28 +152,8 @@ internal fun ControlCenterPanel(
                 FlashlightToggle()
                 BrightnessSlider()
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    SystemPanelButton(
-                        icon = Icons.Filled.Wifi,
-                        label = "Wi-Fi",
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        // Settings.Panel.ACTION_WIFI (a lighter-weight quick
-                        // panel) needs API 26 - this app's minSdk is 24, so
-                        // the plain settings screen (available since API 1)
-                        // is what actually works on every supported device.
-                        context.startActivity(
-                            Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
-                    SystemPanelButton(
-                        icon = Icons.Filled.Bluetooth,
-                        label = "Bluetooth",
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        context.startActivity(
-                            Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
+                    WifiStatusButton(modifier = Modifier.weight(1f))
+                    BluetoothStatusButton(modifier = Modifier.weight(1f))
                     AirplaneModeButton(modifier = Modifier.weight(1f))
                 }
             }
@@ -381,12 +364,18 @@ private fun SystemPanelButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     modifier: Modifier = Modifier,
+    // Read-only status, not a toggle - Wi-Fi/Bluetooth are still one tap to
+    // Settings, same as before, this only darkens the tile to reflect
+    // whatever state it's ALREADY in (see WifiStatusButton/
+    // BluetoothStatusButton), matching the Airplane tile's own on/off look
+    // without actually being able to flip either from here.
+    on: Boolean = false,
     onClick: () -> Unit
 ) {
     Column(
         modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Color.Black.copy(alpha = 0.05f))
+            .background(if (on) Color.Black.copy(alpha = 0.24f) else Color.Black.copy(alpha = 0.05f))
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -394,5 +383,94 @@ private fun SystemPanelButton(
     ) {
         Icon(icon, contentDescription = null, tint = controlCenterContentColor)
         Text(label, color = controlCenterContentColor, style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/** Wi-Fi's on/off state is readable with only ACCESS_WIFI_STATE, a normal
+ *  (install-time, no dialog) permission - no runtime request needed, unlike
+ *  Bluetooth below. Kept current via a broadcast receiver for as long as
+ *  this tile is on screen, so toggling Wi-Fi from anywhere else (the real
+ *  quick settings, another app) is reflected here too, not just at the
+ *  moment this panel happened to open. */
+@Composable
+private fun WifiStatusButton(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val wifiManager = remember {
+        context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+    }
+    var on by remember { mutableStateOf(runCatching { wifiManager.isWifiEnabled }.getOrDefault(false)) }
+    DisposableEffect(wifiManager) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                on = runCatching { wifiManager.isWifiEnabled }.getOrDefault(on)
+            }
+        }
+        context.registerReceiver(
+            receiver,
+            android.content.IntentFilter(android.net.wifi.WifiManager.WIFI_STATE_CHANGED_ACTION)
+        )
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    SystemPanelButton(icon = Icons.Filled.Wifi, label = "Wi-Fi", modifier = modifier, on = on) {
+        // Settings.Panel.ACTION_WIFI (a lighter-weight quick panel) needs
+        // API 26 - this app's minSdk is 24, so the plain settings screen
+        // (available since API 1) is what actually works on every
+        // supported device.
+        context.startActivity(
+            Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+    }
+}
+
+/** Bluetooth's adapter state needs the BLUETOOTH_CONNECT runtime permission
+ *  on API 31+ (a plain manifest declaration isn't enough there, unlike
+ *  Wi-Fi's ACCESS_WIFI_STATE) - requested once, the first time this tile is
+ *  composed, rather than up front at app launch, since it's only needed for
+ *  this one optional bit of status. If it's denied, the tile just never
+ *  darkens - it still opens Settings fine either way. */
+@Composable
+private fun BluetoothStatusButton(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val adapter = remember {
+        (context.applicationContext.getSystemService(Context.BLUETOOTH_SERVICE) as? android.bluetooth.BluetoothManager)
+            ?.adapter
+    }
+    fun hasConnectPermission() = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S ||
+        context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) ==
+        android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    var hasPermission by remember { mutableStateOf(hasConnectPermission()) }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> hasPermission = granted }
+    LaunchedEffect(Unit) {
+        if (!hasPermission && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            permissionLauncher.launch(android.Manifest.permission.BLUETOOTH_CONNECT)
+        }
+    }
+
+    fun readEnabled() = if (adapter != null && hasPermission) {
+        runCatching { adapter.isEnabled }.getOrDefault(false)
+    } else {
+        false
+    }
+    var on by remember(hasPermission) { mutableStateOf(readEnabled()) }
+    DisposableEffect(adapter, hasPermission) {
+        if (adapter == null || !hasPermission) return@DisposableEffect onDispose {}
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                on = readEnabled()
+            }
+        }
+        context.registerReceiver(
+            receiver,
+            android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED)
+        )
+        onDispose { context.unregisterReceiver(receiver) }
+    }
+    SystemPanelButton(icon = Icons.Filled.Bluetooth, label = "Bluetooth", modifier = modifier, on = on) {
+        context.startActivity(
+            Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 }

@@ -24,6 +24,15 @@
          granted, the airplane button falls back to opening Settings. -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Control Center reads (never writes) current Wi-Fi/Bluetooth state
+         to darken those tiles when already on - ACCESS_WIFI_STATE is
+         a normal, install-time-granted permission; reading Bluetooth's
+         adapter state needs BLUETOOTH_CONNECT as a runtime permission on
+         API 31+, and the older BLUETOOTH permission (capped at API 30,
+         where it was itself install-time) on anything before that. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application
         android:allowBackup="true"
