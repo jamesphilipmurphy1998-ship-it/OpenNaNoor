@@ -55,7 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -66,15 +65,9 @@ import androidx.compose.ui.unit.dp
  *  down from rather than centred, matching iOS's own Control Center. */
 private const val CONTROL_CENTER_WIDTH_FRACTION = 0.62f
 
-// Same white as searchGlassBrush, just less see-through - toggles need to
-// read clearly against whatever busy wallpaper/icons are behind the panel,
-// more than the search card (mostly a text field) ever did.
-private val controlCenterGlassBrush = Brush.linearGradient(
-    colors = listOf(
-        Color.White.copy(alpha = 0.97f),
-        Color.White.copy(alpha = 0.90f)
-    )
-)
+// Fully solid now, no alpha at all - not a frosted/glass material like the
+// folder preview or search panel, just a plain opaque card.
+private val controlCenterBackground = Color(0xFFF2F2F4)
 
 // The panel background above is now solidly white, not translucent dark
 // glass - white text/icons (fine when this used to blend into whatever was
@@ -130,7 +123,7 @@ internal fun ControlCenterPanel(
                         top = insets.calculateTopPadding() + 12.dp
                     )
                     .clip(shape)
-                    .background(controlCenterGlassBrush)
+                    .background(controlCenterBackground)
                     .border(1.dp, folderGlassBorderBrush, shape)
                     .padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
