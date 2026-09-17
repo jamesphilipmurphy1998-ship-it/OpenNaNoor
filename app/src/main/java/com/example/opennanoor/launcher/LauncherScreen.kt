@@ -770,7 +770,7 @@ fun LauncherScreen(
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
                                 startedInControlZone = offset.x > size.width - iconSizePx * 2 &&
-                                    offset.y < iconSizePx * 2
+                                    offset.y < iconSizePx * 3
                                 totalDrag = 0f
                             }
                         ) { _, dragAmount ->
