@@ -76,6 +76,13 @@ private val controlCenterGlassBrush = Brush.linearGradient(
     )
 )
 
+// The panel background above is now solidly white, not translucent dark
+// glass - white text/icons (fine when this used to blend into whatever was
+// behind it) had gone invisible against it. Dark content is what actually
+// reads against an opaque light panel, matching how iOS's own Control
+// Center flips to dark icons on its light material.
+private val controlCenterContentColor = Color(0xFF1C1C1E)
+
 @Composable
 internal fun ControlCenterPanel(
     visible: Boolean,
@@ -218,14 +225,14 @@ private fun ToggleTile(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(if (on) Color.White.copy(alpha = 0.28f) else Color.White.copy(alpha = 0.08f))
+            .background(if (on) Color.Black.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.05f))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White)
-        Text(label, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+        Icon(icon, contentDescription = null, tint = controlCenterContentColor)
+        Text(label, color = controlCenterContentColor, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -249,7 +256,7 @@ private fun BrightnessSlider() {
         )
     }
     Column(Modifier.fillMaxWidth()) {
-        Text("Brightness", color = Color.White, style = MaterialTheme.typography.bodySmall)
+        Text("Brightness", color = controlCenterContentColor, style = MaterialTheme.typography.bodySmall)
         if (canWrite) {
             Slider(
                 value = value,
@@ -264,15 +271,15 @@ private fun BrightnessSlider() {
                     }
                 },
                 colors = SliderDefaults.colors(
-                    thumbColor = Color.White,
-                    activeTrackColor = Color.White.copy(alpha = 0.8f),
-                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                    thumbColor = controlCenterContentColor,
+                    activeTrackColor = controlCenterContentColor.copy(alpha = 0.8f),
+                    inactiveTrackColor = controlCenterContentColor.copy(alpha = 0.25f)
                 )
             )
         } else {
             Text(
                 "Tap to allow OpenNaNoor to adjust brightness",
-                color = Color.White.copy(alpha = 0.7f),
+                color = controlCenterContentColor.copy(alpha = 0.7f),
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -301,13 +308,13 @@ private fun SystemPanelButton(
     Column(
         modifier
             .clip(RoundedCornerShape(16.dp))
-            .background(Color.White.copy(alpha = 0.1f))
+            .background(Color.Black.copy(alpha = 0.05f))
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White)
-        Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall)
+        Icon(icon, contentDescription = null, tint = controlCenterContentColor)
+        Text(label, color = controlCenterContentColor, style = MaterialTheme.typography.labelSmall)
     }
 }
