@@ -93,9 +93,13 @@ fun HomePage(
      *  between and around the ones on their own page (see widgetBands/
      *  toDisplayY/toGridY). */
     widgets: List<PlacedWidget> = emptyList(),
-    /** Unbinds one widget - wired to the same remove badge every ordinary
-     *  icon gets once [editing] is on. */
+    /** Unbinds one widget - called by LauncherScreen's own WidgetOptionsMenu,
+     *  not directly by the badge any more (see onOpenWidgetOptions). */
     onRemoveWidget: (appWidgetId: Int) -> Unit = {},
+    /** The widget's own spanner badge opens an options menu (same as an
+     *  app icon's) rather than removing instantly - one accidental tap on
+     *  the badge used to lose the widget outright with no confirmation. */
+    onOpenWidgetOptions: (appWidgetId: Int) -> Unit = {},
     /** A widget was dragged and released - [page]/[row] is the new
      *  (already clamped, collision-free) page and row its own band should
      *  start at - [page] may differ from the page it was dragged from. */
@@ -401,7 +405,7 @@ fun HomePage(
                             // - sidesteps that entirely rather than
                             // fighting the interop view for the touch.
                             RemoveBadge(
-                                onClick = { onRemoveWidget(widget.appWidgetId) },
+                                onClick = { onOpenWidgetOptions(widget.appWidgetId) },
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
                                     .offset(x = 10.dp, y = (-10).dp),

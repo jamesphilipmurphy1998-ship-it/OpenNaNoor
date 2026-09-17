@@ -102,6 +102,25 @@ internal fun TileOptionsMenu(
 }
 
 /**
+ * The menu a widget's own options badge (the spanner) opens - just "Remove
+ * widget" for now, same [PopupMenuScrim] as every other popup here. Used to
+ * remove instantly on tap, no confirmation at all - one accidental brush of
+ * the badge lost the widget outright.
+ */
+@Composable
+internal fun WidgetOptionsMenu(
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    PopupMenuScrim(onDismiss = onDismiss) {
+        HomeLongPressMenuItem("Remove widget") {
+            onDismiss()
+            onRemove()
+        }
+    }
+}
+
+/**
  * The shared scrim + solid rounded bubble every popup menu on the home
  * screen (long-press-empty-space, a tile's own options) uses - tapping the
  * dimmed background outside it dismisses, same as [HomeLongPressMenu]

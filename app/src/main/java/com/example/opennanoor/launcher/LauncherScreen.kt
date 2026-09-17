@@ -213,6 +213,10 @@ fun LauncherScreen(
     // level up, not owned by whichever page happened to render the tile.
     var appOptionsTarget by remember { mutableStateOf<HomeLocation.Page?>(null) }
     var renamingApp by remember { mutableStateOf(false) }
+    // Same reasoning as appOptionsTarget above - the menu itself is a
+    // full-screen overlay, not owned by whichever page's widget the
+    // spanner was pressed on.
+    var widgetOptionsTarget by remember { mutableStateOf<Int?>(null) }
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     // The authoritative cell measurements, reported up by whichever
@@ -837,6 +841,7 @@ fun LauncherScreen(
                         onOpenAppOptions = { slot -> appOptionsTarget = HomeLocation.Page(pageIndex, slot) },
                         widgets = widgets,
                         onRemoveWidget = onRemoveWidget,
+                        onOpenWidgetOptions = { appWidgetId -> widgetOptionsTarget = appWidgetId },
                         onWidgetMoved = onWidgetMoved,
                         onWidgetResized = onWidgetResized,
                         onWidgetDragMoved = ::handleWidgetDragMoved,
@@ -1049,6 +1054,16 @@ fun LauncherScreen(
                     title = "Rename app"
                 )
             }
+        }
+
+        if (widgetOptionsTarget != null) {
+            WidgetOptionsMenu(
+                onRemove = {
+                    widgetOptionsTarget?.let { onRemoveWidget(it) }
+                    widgetOptionsTarget = null
+                },
+                onDismiss = { widgetOptionsTarget = null }
+            )
         }
 
         state.openFolder?.let { folder ->
