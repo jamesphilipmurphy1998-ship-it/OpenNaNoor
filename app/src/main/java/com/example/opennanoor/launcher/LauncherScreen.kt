@@ -769,7 +769,19 @@ fun LauncherScreen(
                         var totalDrag = 0f
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
-                                startedInControlZone = offset.x > size.width - iconSizePx * 3 &&
+                                // Width matches the panel's own footprint
+                                // (same CONTROL_CENTER_WIDTH_FRACTION it
+                                // draws itself at) rather than an icon-count
+                                // guess, so the trigger area is exactly
+                                // where the panel will actually appear and
+                                // stays that way if its width ever changes.
+                                // Height stays icon-size-relative - the true
+                                // top edge of the screen already belongs to
+                                // the system status bar pulldown regardless
+                                // of what this app does, so there's nothing
+                                // to gain by reaching the zone all the way
+                                // up to it.
+                                startedInControlZone = offset.x > size.width * (1f - CONTROL_CENTER_WIDTH_FRACTION) &&
                                     offset.y < iconSizePx * 3
                                 totalDrag = 0f
                             }

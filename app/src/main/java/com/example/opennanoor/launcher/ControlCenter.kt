@@ -62,8 +62,12 @@ import androidx.compose.ui.unit.dp
 
 /** Fraction of the screen width the panel occupies - narrower than
  *  [SearchPanel]'s full width, and anchored to the corner it was pulled
- *  down from rather than centred, matching iOS's own Control Center. */
-private const val CONTROL_CENTER_WIDTH_FRACTION = 0.62f
+ *  down from rather than centred, matching iOS's own Control Center.
+ *  Not private - the swipe zone that opens this panel (see LauncherScreen's
+ *  pager pointerInput) is sized off this same constant, so the trigger area
+ *  always matches the panel's own footprint instead of being a second,
+ *  independently-tuned number that could quietly drift out of sync with it. */
+internal const val CONTROL_CENTER_WIDTH_FRACTION = 0.62f
 
 // Fully solid now, no alpha at all - not a frosted/glass material like the
 // folder preview or search panel, just a plain opaque card.
