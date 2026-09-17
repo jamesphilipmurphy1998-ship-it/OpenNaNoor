@@ -56,8 +56,12 @@ internal fun HomeLongPressMenu(
             Modifier
                 .padding(horizontal = 48.dp)
                 .clip(shape)
-                .background(folderGlassBrush)
-                .border(1.dp, folderGlassBorderBrush, shape)
+                // Solid, not the same translucent glass the folder preview
+                // uses - this menu sits over whatever busy wallpaper/icons
+                // are behind it, and needed to read clearly on any of them
+                // rather than blend into the page.
+                .background(Color(0xFF232326))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), shape)
                 .padding(vertical = 8.dp)
         ) {
             HomeLongPressMenuItem("Wallpaper & style") {
