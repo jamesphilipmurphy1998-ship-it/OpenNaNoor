@@ -89,6 +89,16 @@ class DragCoordinator {
      *  the same D8-dexing reason as draggingWidgetId above. */
     var draggingWidgetGrabOffsetY by mutableStateOf(0f)
 
+    /** The id of the widget currently being resized by its own handle (see
+     *  HomePage's widget block), null the rest of the time - same
+     *  "lives here, not as separate remembered state" reasoning as
+     *  draggingWidgetId above. */
+    var resizingWidgetId by mutableStateOf<Int?>(null)
+
+    /** The live, in-progress row span a resize drag is currently previewing -
+     *  only meaningful while [resizingWidgetId] is non-null. */
+    var resizingWidgetRowSpan by mutableStateOf(0)
+
     val active: Boolean get() = item != null
 
     /** True when this drag began in the drawer rather than on a home slot. */

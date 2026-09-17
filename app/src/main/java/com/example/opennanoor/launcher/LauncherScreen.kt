@@ -101,6 +101,8 @@ fun LauncherScreen(
     onAddWidget: () -> Unit = {},
     onRemoveWidget: (appWidgetId: Int) -> Unit = {},
     onWidgetMoved: (appWidgetId: Int, page: Int, row: Int) -> Unit = { _, _, _ -> },
+    onWidgetResized: (appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
+        { _, _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
     val insets = WindowInsets.systemBars.asPaddingValues()
@@ -257,7 +259,9 @@ fun LauncherScreen(
                     pageWidgets,
                     overrideId = draggingId,
                     overrideTopRow = previewWidgetRow(
-                        pageWidgets, draggingId, drag.position.y - drag.draggingWidgetGrabOffsetY, topPaddingPx, cellHeightPx, state.rows
+                        pageWidgets, draggingId, drag.position.y - drag.draggingWidgetGrabOffsetY,
+                        topPaddingPx, cellHeightPx, state.rows,
+                        draggingRowSpan = pageWidgets.first { it.appWidgetId == draggingId }.rowSpan
                     )
                 )
             }
@@ -703,6 +707,7 @@ fun LauncherScreen(
                         widgets = widgets,
                         onRemoveWidget = onRemoveWidget,
                         onWidgetMoved = onWidgetMoved,
+                        onWidgetResized = onWidgetResized,
                         onWidgetDragMoved = ::handleWidgetDragMoved,
                         spillEvent = state.spillEvent?.takeIf { it.fromPage == pageIndex },
                         onSpillAnimationDone = onSpillAnimationDone,
@@ -932,7 +937,11 @@ fun LauncherScreen(
                     }
                     .size(
                         width = with(density) { (state.columns * cellWidthPx).toDp() },
-                        height = with(density) { (WIDGET_RESERVED_ROWS * cellHeightPx).toDp() }
+                        height = with(density) {
+                            val span = widgets.firstOrNull { it.appWidgetId == drag.draggingWidgetId }?.rowSpan
+                                ?: WIDGET_RESERVED_ROWS
+                            (span * cellHeightPx).toDp()
+                        }
                     )
                     .clip(RoundedCornerShape(14.dp))
                     .background(Color.White.copy(alpha = 0.22f))

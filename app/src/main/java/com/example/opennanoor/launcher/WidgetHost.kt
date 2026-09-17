@@ -21,8 +21,24 @@ import androidx.compose.ui.platform.LocalContext
 import com.example.opennanoor.core.Settings
 import com.example.opennanoor.core.WidgetPlacement
 
-/** One placed widget: its id, its hosted view, which page it's on, and which row (0-indexed from the top) it starts at. */
-data class PlacedWidget(val appWidgetId: Int, val view: AppWidgetHostView, val page: Int, val topRow: Int)
+/**
+ * One placed widget: its id, its hosted view, which page it's on, which row
+ * (0-indexed from the top) it starts at, how many rows tall it currently is,
+ * and the shortest it can ever be shrunk to - the widget's own declared
+ * [AppWidgetProviderInfo.minResizeHeight] (falling back to minHeight, for a
+ * provider that doesn't set a smaller one specifically for live resizing),
+ * in dp. Kept as dp, not rows, since a row's own height in px depends on
+ * this device's row-count setting - HomePage converts it to a row count
+ * against whatever cellHeightPx it's actually rendering with right now.
+ */
+data class PlacedWidget(
+    val appWidgetId: Int,
+    val view: AppWidgetHostView,
+    val page: Int,
+    val topRow: Int,
+    val rowSpan: Int,
+    val minHeightDp: Int
+)
 
 /**
  * Picking, binding, and hosting any number of home-screen widgets.
@@ -68,10 +84,32 @@ class WidgetHostController(
     /** Moves one widget to [page]/[row] - dragging it in HomePage's own widget block resolves to this. */
     fun setWidgetPlacement(appWidgetId: Int, page: Int, row: Int) {
         settings.widgetPlacements = settings.widgetPlacements.map {
-            if (it.appWidgetId == appWidgetId) WidgetPlacement(appWidgetId, page, row) else it
+            if (it.appWidgetId == appWidgetId) it.copy(page = page, topRow = row) else it
         }
         placedWidgets = placedWidgets.map {
             if (it.appWidgetId == appWidgetId) it.copy(page = page, topRow = row) else it
+        }
+    }
+
+    /**
+     * Resizes one widget to [rowSpan] rows tall - dragging its resize
+     * handle in HomePage's own widget block resolves to this. [widthDp] is
+     * the widget's own current on-screen width (full page width, in dp) and
+     * [heightDp] its new height - both handed straight to the widget's own
+     * [AppWidgetHostView.updateAppWidgetSize] so its provider gets a proper
+     * onAppWidgetOptionsChanged and can redraw for the new size (a compact
+     * RemoteViews layout instead of the full one, say) rather than just
+     * being stretched or clipped with no say in it.
+     */
+    fun resizeWidget(appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) {
+        settings.widgetPlacements = settings.widgetPlacements.map {
+            if (it.appWidgetId == appWidgetId) it.copy(rowSpan = rowSpan) else it
+        }
+        placedWidgets = placedWidgets.map {
+            if (it.appWidgetId == appWidgetId) {
+                it.view.updateAppWidgetSize(null, widthDp, heightDp, widthDp, heightDp)
+                it.copy(rowSpan = rowSpan)
+            } else it
         }
     }
 
@@ -91,7 +129,8 @@ class WidgetHostController(
             }
             stillValid += placement
             restored += PlacedWidget(
-                placement.appWidgetId, createHostView(placement.appWidgetId, info), placement.page, placement.topRow
+                placement.appWidgetId, createHostView(placement.appWidgetId, info),
+                placement.page, placement.topRow, placement.rowSpan, minHeightDpFor(info)
             )
         }
         if (stillValid != placements) settings.widgetPlacements = stillValid
@@ -163,16 +202,24 @@ class WidgetHostController(
         // (including to a different page) afterwards same as any other.
         val nextRow = settings.widgetPlacements
             .filter { it.page == 0 }
-            .maxOfOrNull { it.topRow + WIDGET_RESERVED_ROWS } ?: 0
-        val placement = WidgetPlacement(appWidgetId, page = 0, topRow = nextRow)
+            .maxOfOrNull { it.topRow + it.rowSpan } ?: 0
+        val placement = WidgetPlacement(appWidgetId, page = 0, topRow = nextRow, rowSpan = WIDGET_RESERVED_ROWS)
         settings.widgetPlacements = settings.widgetPlacements + placement
-        placedWidgets = placedWidgets + PlacedWidget(appWidgetId, createHostView(appWidgetId, info), 0, nextRow)
+        placedWidgets = placedWidgets + PlacedWidget(
+            appWidgetId, createHostView(appWidgetId, info), 0, nextRow, WIDGET_RESERVED_ROWS, minHeightDpFor(info)
+        )
     }
 
     private fun createHostView(appWidgetId: Int, info: AppWidgetProviderInfo): AppWidgetHostView =
         appWidgetHost.createView(activity, appWidgetId, info).apply {
             setAppWidget(appWidgetId, info)
         }
+
+    /** minResizeHeight is the smallest a provider says it can look GOOD at
+     *  while being live-resized - falls back to minHeight (its floor for
+     *  ever being placed at all) for a provider that leaves it unset (0). */
+    private fun minHeightDpFor(info: AppWidgetProviderInfo): Int =
+        info.minResizeHeight.takeIf { it > 0 } ?: info.minHeight
 }
 
 private const val WIDGET_HOST_ID = 1

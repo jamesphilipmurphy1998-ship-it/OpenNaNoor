@@ -3,8 +3,10 @@ package com.example.opennanoor.core
 import android.content.Context
 import androidx.core.content.edit
 
-/** One widget's persisted spot: which page it's on and which row it starts at. */
-data class WidgetPlacement(val appWidgetId: Int, val page: Int, val topRow: Int)
+/** One widget's persisted spot: which page it's on, which row it starts at,
+ *  and how many rows tall it is - resizable per-widget, see WidgetHost.kt's
+ *  own resize handle. */
+data class WidgetPlacement(val appWidgetId: Int, val page: Int, val topRow: Int, val rowSpan: Int)
 
 /** Small persisted preferences. Deliberately plain - no DataStore ceremony yet. */
 class Settings(context: Context) {
@@ -45,10 +47,14 @@ class Settings(context: Context) {
         set(value) = prefs.edit { putString(KEY_RECENT_APPS, value.joinToString(",")) }
 
     /**
-     * Every bound home-screen widget's (AppWidgetId, page, topRow) - which
-     * page it's on and which row of it (0-indexed from the top) it starts
-     * at, each independently. "id:page:row" triples, comma-separated same
-     * as everything else here; empty means none placed. See WidgetHost.kt.
+     * Every bound home-screen widget's (AppWidgetId, page, topRow, rowSpan) -
+     * which page it's on, which row of it (0-indexed from the top) it
+     * starts at, and how many rows tall it is, each independently.
+     * "id:page:row:span" quads, comma-separated same as everything else
+     * here; empty means none placed. See WidgetHost.kt. The span segment is
+     * optional on read (defaults to 2, the fixed height every widget had
+     * before resizing existed) so a layout saved before this doesn't lose
+     * its widgets.
      */
     var widgetPlacements: List<WidgetPlacement>
         get() = prefs.getString(KEY_WIDGET_PLACEMENTS, null)
@@ -58,11 +64,17 @@ class Settings(context: Context) {
                 val id = parts.getOrNull(0)?.toIntOrNull()
                 val page = parts.getOrNull(1)?.toIntOrNull()
                 val row = parts.getOrNull(2)?.toIntOrNull()
-                if (id != null && page != null && row != null) WidgetPlacement(id, page, row) else null
+                val span = parts.getOrNull(3)?.toIntOrNull() ?: DEFAULT_WIDGET_ROW_SPAN
+                if (id != null && page != null && row != null) {
+                    WidgetPlacement(id, page, row, span.coerceAtLeast(1))
+                } else null
             }
             .orEmpty()
         set(value) = prefs.edit {
-            putString(KEY_WIDGET_PLACEMENTS, value.joinToString(",") { "${it.appWidgetId}:${it.page}:${it.topRow}" })
+            putString(
+                KEY_WIDGET_PLACEMENTS,
+                value.joinToString(",") { "${it.appWidgetId}:${it.page}:${it.topRow}:${it.rowSpan}" }
+            )
         }
 
     private companion object {
@@ -72,5 +84,6 @@ class Settings(context: Context) {
         const val KEY_IOS_STYLE = "ios_icon_style"
         const val KEY_RECENT_APPS = "recent_apps"
         const val KEY_WIDGET_PLACEMENTS = "widget_placements"
+        const val DEFAULT_WIDGET_ROW_SPAN = 2
     }
 }

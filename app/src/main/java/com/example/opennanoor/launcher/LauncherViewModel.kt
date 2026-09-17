@@ -53,8 +53,7 @@ internal const val WIDGET_RESERVED_ROWS = 2
  * computed from, so they can't drift out of sync with each other the way
  * separately-written copies of this same adjustment could.
  */
-internal fun pageCapacityFor(pageIndex: Int, columns: Int, rows: Int, widgetCount: Int): Int {
-    val reservedRows = widgetCount * WIDGET_RESERVED_ROWS
+internal fun pageCapacityFor(pageIndex: Int, columns: Int, rows: Int, reservedRows: Int): Int {
     return (pageCapacity(columns, rows) - columns * reservedRows).coerceAtLeast(1)
 }
 
@@ -191,7 +190,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 // it (see refreshSettingsIfChanged), which doesn't always
                 // fire on the very next resume (e.g. one where packChanged
                 // is also true takes the full-refresh path instead).
-                val widgetCountByPage = settings.widgetPlacements.groupingBy { it.page }.eachCount()
+                val widgetCountByPage = settings.widgetPlacements.groupingBy { it.page }
+                    .fold(0) { acc, p -> acc + p.rowSpan }
                 val pages = chunkIntoPages(
                     resolvedPages.flatten() + unplaced.mapNotNull { icons[it] }, columns, rows, widgetCountByPage
                 )
@@ -273,7 +273,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val current = _state.value
         val newColumns = settings.columns
         val newRows = settings.rows
-        val newWidgetCountByPage = settings.widgetPlacements.groupingBy { it.page }.eachCount()
+        val newWidgetCountByPage = settings.widgetPlacements.groupingBy { it.page }
+            .fold(0) { acc, p -> acc + p.rowSpan }
         val layoutChanged = newColumns != current.columns || newRows != current.rows
         val widgetChanged = newWidgetCountByPage != current.widgetCountByPage
         when {

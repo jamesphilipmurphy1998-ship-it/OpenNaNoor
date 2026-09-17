@@ -35,7 +35,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.geometry.Offset
+import kotlin.math.ceil
 import kotlin.math.roundToInt
+import androidx.compose.foundation.gestures.detectDragGestures
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -93,6 +95,12 @@ fun HomePage(
      *  (see LauncherScreen's own handleDragMoved/checkEdgeFlip), so a
      *  widget can be dragged onto a different page the same way. */
     onWidgetDragMoved: (Offset) -> Unit = {},
+    /** A widget's resize handle was released - [rowSpan] is the new
+     *  (already clamped, collision-free) height to commit, [widthDp]/
+     *  [heightDp] its new on-screen size in dp for the widget's own
+     *  updateAppWidgetSize call. */
+    onWidgetResized: (appWidgetId: Int, rowSpan: Int, widthDp: Int, heightDp: Int) -> Unit =
+        { _, _, _, _ -> },
     /** Set only on the page an icon just spilled off of - see [SpillEvent]. */
     spillEvent: SpillEvent? = null,
     onSpillAnimationDone: () -> Unit = {},
@@ -177,7 +185,9 @@ fun HomePage(
                     pageWidgets,
                     overrideId = draggingId,
                     overrideTopRow = previewWidgetRow(
-                        pageWidgets, draggingId, drag.position.y - drag.draggingWidgetGrabOffsetY, topPaddingPx, cellHeightPx, rows
+                        pageWidgets, draggingId, drag.position.y - drag.draggingWidgetGrabOffsetY,
+                        topPaddingPx, cellHeightPx, rows,
+                        draggingRowSpan = pageWidgets.first { it.appWidgetId == draggingId }.rowSpan
                     )
                 )
             }
@@ -187,6 +197,16 @@ fun HomePage(
             pageWidgets.forEach { widget ->
                 key(widget.appWidgetId) {
                     val isDragging = widget.appWidgetId == drag.draggingWidgetId
+                    val isResizing = widget.appWidgetId == drag.resizingWidgetId
+                    // The row span to actually render at - the live,
+                    // in-progress one from the resize handle below while a
+                    // resize on THIS widget is in flight, its real
+                    // committed one otherwise. Both onDragEnd (resize) and
+                    // the widget list update (from onWidgetResized, once
+                    // the caller commits it) land in the very same
+                    // recomposition, so there's no gap here for a flash the
+                    // way the Y-position one needed releaseY to close.
+                    val liveRowSpan = if (isResizing) drag.resizingWidgetRowSpan else widget.rowSpan
                     val settledY = topPaddingPx + widget.topRow * cellHeightPx
                     // Unkeyed beyond key(appWidgetId) above, same reasoning
                     // as every icon tile's own animatedOffset - this widget's
@@ -244,7 +264,7 @@ fun HomePage(
                             }
                             .size(
                                 width = with(density) { (columns * cellWidthPx).toDp() },
-                                height = with(density) { (WIDGET_RESERVED_ROWS * cellHeightPx).toDp() }
+                                height = with(density) { (liveRowSpan * cellHeightPx).toDp() }
                             )
                             .graphicsLayer {
                                 rotationZ = if (isDragging) 0f else angle
@@ -311,7 +331,8 @@ fun HomePage(
                                         val finalRow = previewWidgetRow(
                                             destWidgets, widget.appWidgetId,
                                             drag.position.y - drag.draggingWidgetGrabOffsetY,
-                                            topPaddingPx, cellHeightPx, rows
+                                            topPaddingPx, cellHeightPx, rows,
+                                            draggingRowSpan = widget.rowSpan
                                         )
                                         // Set here, synchronously, before
                                         // isDragging flips false below - see
@@ -375,6 +396,67 @@ fun HomePage(
                                     .align(Alignment.TopStart)
                                     .offset(x = (-10).dp, y = (-10).dp)
                             )
+                            // The resize handle - a small grip at the
+                            // widget's own bottom-centre, dragged straight
+                            // (no long-press first, unlike moving the whole
+                            // widget - this handle IS the intent, nothing
+                            // else on the widget competes with it for a
+                            // plain drag here) to grow or shrink it in
+                            // whole rows. Clamped between the widget's own
+                            // declared minimum (minHeightDp, converted to
+                            // rows against this page's real cellHeight) and
+                            // either the page's own bottom edge or the
+                            // nearest widget already sitting below it,
+                            // whichever comes first - resizing never
+                            // overlaps another widget, the same rule moving
+                            // one already follows.
+                            Box(
+                                Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .offset(y = 10.dp)
+                                    .size(40.dp, 20.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color.White.copy(alpha = 0.85f))
+                                    .pointerInput(widget.appWidgetId, widget.topRow, widget.rowSpan) {
+                                        var startRowSpan = widget.rowSpan
+                                        var accumulatedDy = 0f
+                                        // cellHeight.value is already a
+                                        // plain dp magnitude - no further
+                                        // density conversion needed to
+                                        // compare it against minHeightDp.
+                                        val minRowSpan = ceil(widget.minHeightDp / cellHeight.value)
+                                            .toInt().coerceAtLeast(1)
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                drag.resizingWidgetId = widget.appWidgetId
+                                                startRowSpan = widget.rowSpan
+                                                accumulatedDy = 0f
+                                                drag.resizingWidgetRowSpan = startRowSpan
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                accumulatedDy += dragAmount.y
+                                                val belowLimit = pageWidgets
+                                                    .filter { it.appWidgetId != widget.appWidgetId && it.topRow > widget.topRow }
+                                                    .minOfOrNull { it.topRow } ?: rows
+                                                val maxRowSpan = (belowLimit - widget.topRow).coerceAtLeast(minRowSpan)
+                                                drag.resizingWidgetRowSpan = (
+                                                    startRowSpan + (accumulatedDy / cellHeightPx).roundToInt()
+                                                ).coerceIn(minRowSpan, maxRowSpan)
+                                            },
+                                            onDragEnd = {
+                                                val finalSpan = drag.resizingWidgetRowSpan
+                                                drag.resizingWidgetId = null
+                                                if (finalSpan != widget.rowSpan) {
+                                                    val widthDp = with(density) { (columns * cellWidthPx).toDp().value.toInt() }
+                                                    val heightDp = with(density) { (finalSpan * cellHeightPx).toDp().value.toInt() }
+                                                    onWidgetResized(widget.appWidgetId, finalSpan, widthDp, heightDp)
+                                                }
+                                            },
+                                            onDragCancel = { drag.resizingWidgetId = null }
+                                        )
+                                    }
+                            )
                         }
                     }
                 }
@@ -423,7 +505,7 @@ fun HomePage(
                 // last column of its own row instead keeps the live preview
                 // and the actual departure animation showing the same
                 // direction throughout the whole gesture.
-                val capacity = pageCapacityFor(pageIndex, columns, rows, pageWidgets.size)
+                val capacity = pageCapacityFor(pageIndex, columns, rows, pageWidgets.sumOf { it.rowSpan })
                 if (display >= capacity) {
                     val lastRow = (capacity - 1) / columns
                     return Offset(
@@ -665,7 +747,7 @@ fun HomePage(
         // its neighbour, then fading out. It plays once and reports back so
         // the event doesn't linger and replay on the next unrelated drop.
         if (spillEvent != null) {
-            val capacity = pageCapacityFor(pageIndex, columns, rows, pageWidgets.size)
+            val capacity = pageCapacityFor(pageIndex, columns, rows, pageWidgets.sumOf { it.rowSpan })
             val lastSlot = capacity - 1
             // Starts exactly where the live preview left the icon, NOT at
             // the last cell. (lastSlot % columns) is columns-1 - one whole
@@ -997,7 +1079,7 @@ internal fun widgetBands(
 ): List<IntRange> = widgets
     .map { widget ->
         val topRow = if (widget.appWidgetId == overrideId) overrideTopRow ?: widget.topRow else widget.topRow
-        topRow until (topRow + WIDGET_RESERVED_ROWS)
+        topRow until (topRow + widget.rowSpan)
     }
     .sortedBy { it.first }
 
@@ -1018,16 +1100,22 @@ internal fun previewWidgetRow(
     positionY: Float,
     topPaddingPx: Float,
     cellHeightPx: Float,
-    rows: Int
+    rows: Int,
+    // The DRAGGED widget's own row span - it may differ from any other
+    // widget's, so it can't be read off widgetsOnPage's own entries the way
+    // it used to be a single shared constant. Defaults to 2 (the fixed
+    // height every widget had before resizing existed) for callers that
+    // haven't been updated to pass a real one.
+    draggingRowSpan: Int = 2
 ): Int? {
-    val maxRow = (rows - WIDGET_RESERVED_ROWS).coerceAtLeast(0)
+    val maxRow = (rows - draggingRowSpan).coerceAtLeast(0)
     val candidateRow = ((positionY - topPaddingPx) / cellHeightPx)
         .roundToInt()
         .coerceIn(0, maxRow)
-    val candidateRange = candidateRow until (candidateRow + WIDGET_RESERVED_ROWS)
+    val candidateRange = candidateRow until (candidateRow + draggingRowSpan)
     val collides = widgetsOnPage.any { other ->
         other.appWidgetId != draggingId &&
-            candidateRange.first < other.topRow + WIDGET_RESERVED_ROWS &&
+            candidateRange.first < other.topRow + other.rowSpan &&
             other.topRow < candidateRange.last + 1
     }
     return if (collides) null else candidateRow

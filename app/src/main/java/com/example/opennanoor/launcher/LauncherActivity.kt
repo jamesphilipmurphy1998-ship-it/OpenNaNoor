@@ -87,6 +87,13 @@ class LauncherActivity : ComponentActivity() {
                         // own widgetCountByPage.
                         vm.refreshSettingsIfChanged()
                     },
+                    onWidgetResized = { id, rowSpan, widthDp, heightDp ->
+                        widgetHost.resizeWidget(id, rowSpan, widthDp, heightDp)
+                        // Growing/shrinking a widget changes how many rows
+                        // its own page reserves, same reflow reasoning as
+                        // onWidgetMoved above.
+                        vm.refreshSettingsIfChanged()
+                    },
                     drawerOpen = drawerOpen,
                     onDrawerOpenChange = { drawerOpen = it },
                     editing = editing,
