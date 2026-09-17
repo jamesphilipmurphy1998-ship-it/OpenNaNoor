@@ -192,8 +192,32 @@ fun HomePage(
                     // as every icon tile's own animatedOffset - this widget's
                     // identity, not its current row, owns the Animatable.
                     val animatedY = remember { Animatable(settledY) }
+                    // Tracks isDragging across recompositions so the effect
+                    // below can tell "a drag on THIS widget just ended" (snap
+                    // to the release point first) apart from "settledY moved
+                    // for some other reason while this widget was never
+                    // touched" (just reflow normally from wherever it already
+                    // is) - both fire this same effect, since it's keyed on
+                    // isDragging too.
+                    val wasDragging = remember { mutableStateOf(false) }
                     LaunchedEffect(settledY, isDragging) {
-                        if (!isDragging) animatedY.animateTo(settledY, tween(REFLOW_ANIMATION_MS))
+                        if (!isDragging) {
+                            // animatedY's own value is stale the instant a
+                            // drag just ended - it was never updated WHILE
+                            // dragging (the Box below reads drag.position
+                            // directly for that), so left alone it would
+                            // animate from wherever the widget was BEFORE
+                            // this drag started, flying in from that old
+                            // spot instead of continuing smoothly from
+                            // where the finger actually let go - the same
+                            // "flies in from an angle" bug icons had before
+                            // being seeded from their own drop position.
+                            if (wasDragging.value) {
+                                animatedY.snapTo(drag.position.y - drag.draggingWidgetGrabOffsetY)
+                            }
+                            animatedY.animateTo(settledY, tween(REFLOW_ANIMATION_MS))
+                        }
+                        wasDragging.value = isDragging
                     }
                     val angle = rememberWobble(enabled = editing, seed = -1 - widget.appWidgetId)
                     Box(
