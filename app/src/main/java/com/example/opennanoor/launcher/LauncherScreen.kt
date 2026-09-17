@@ -740,16 +740,36 @@ fun LauncherScreen(
                         // Center even once it's dragged well outside that
                         // zone.
                         var startedInControlZone = false
+                        // Total displacement since the gesture started, not
+                        // just the latest sample's own delta. A fast flick
+                        // covers the same real distance in far fewer, much
+                        // bigger pointer-move events than a slow deliberate
+                        // pull does - checking only the size of the SINGLE
+                        // event that happened to cross the threshold is fine
+                        // for a slow drag (many small samples, several of
+                        // which individually exceed it), but a fast one can
+                        // jump from well under the threshold straight past
+                        // it in one sample, and unlucky sample timing could
+                        // even deliver the whole gesture as one motion event
+                        // with a per-sample delta the reported dragAmount
+                        // doesn't reflect - "swipe too fast and it doesn't
+                        // come down". Tracking the running total instead
+                        // means it only ever depends on how far the finger
+                        // actually travelled, never on how that distance
+                        // happened to get sliced into samples.
+                        var totalDrag = 0f
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
                                 startedInControlZone = offset.x > size.width * 0.7f &&
                                     offset.y < 120.dp.toPx()
+                                totalDrag = 0f
                             }
                         ) { _, dragAmount ->
+                            totalDrag += dragAmount
                             when {
-                                dragAmount < -DRAWER_DRAG_THRESHOLD -> onDrawerOpenChange(true)
-                                dragAmount > SEARCH_DRAG_THRESHOLD && startedInControlZone -> controlCenterOpen = true
-                                dragAmount > SEARCH_DRAG_THRESHOLD -> searchOpen = true
+                                totalDrag < -DRAWER_DRAG_THRESHOLD -> onDrawerOpenChange(true)
+                                totalDrag > SEARCH_DRAG_THRESHOLD && startedInControlZone -> controlCenterOpen = true
+                                totalDrag > SEARCH_DRAG_THRESHOLD -> searchOpen = true
                             }
                         }
                     }
