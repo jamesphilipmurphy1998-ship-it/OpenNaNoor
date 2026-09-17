@@ -469,8 +469,20 @@ fun LauncherScreen(
                             // against the un-squeezed current packing instead
                             // would disagree with the spacing the icons were
                             // actually just shown at.
+                            //
+                            // A same-dock reorder is different again -
+                            // previewCount() deliberately does NOT reduce the
+                            // count while hovering the dock (reordering
+                            // doesn't change how many icons are here, just
+                            // their order), so the live push-preview spaces
+                            // icons using the full, un-reduced state.dock.size.
+                            // Resolving the drop against the reduced itemCount
+                            // (size - 1) would pack tighter than what was just
+                            // shown, disagreeing near a slot boundary - the
+                            // same "lands where it wasn't aimed" bug this
+                            // whole block exists to avoid.
                             val packingCount = if (drag.origin is HomeLocation.Dock) {
-                                itemCount
+                                state.dock.size
                             } else {
                                 itemCount + 1
                             }
