@@ -1393,12 +1393,18 @@ internal fun overlappingWidget(
 private const val FOLDER_ZONE_START = 0.2f
 private const val FOLDER_ZONE_END = 0.8f
 // How far pageFoldTarget widens the zone toward whichever edge the drag
-// is actually approaching FROM - see its own comment. 0.05 comfortably
-// covers the ~0.08 peak on-device logging caught for a real rightward
-// drag onto its very next neighbour (never once reaching the plain
-// FOLDER_ZONE_START of 0.2), with a small margin to spare.
-private const val FOLDER_ZONE_ENTRY_START = 0.05f
-private const val FOLDER_ZONE_ENTRY_END = 0.95f
+// is actually approaching FROM - see its own comment. Wide open (all the
+// way to the cell's own edge) rather than just past the ~0.08 peak
+// on-device logging caught: leaving ANY gap between "just crossed into
+// this cell" and "now counts as hovering it" let the ordinary
+// insert-reflow preview play for that gap, then snap back the instant
+// the fold zone was reached - reported as the target "jolting like it
+// wants to swap then stops". Opening the entry edge all the way to 0/1
+// means hoverTarget (and the whole-page freeze that follows it) engages
+// the very first frame the drag ghost visually overlaps the target at
+// all, leaving no window for that transient preview to ever start.
+private const val FOLDER_ZONE_ENTRY_START = 0f
+private const val FOLDER_ZONE_ENTRY_END = 1f
 
 /**
  * The small circled spanner that takes an item off the home screen - same
