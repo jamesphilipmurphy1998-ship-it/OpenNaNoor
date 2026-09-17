@@ -71,8 +71,8 @@ private const val CONTROL_CENTER_WIDTH_FRACTION = 0.62f
 // more than the search card (mostly a text field) ever did.
 private val controlCenterGlassBrush = Brush.linearGradient(
     colors = listOf(
-        Color.White.copy(alpha = 0.75f),
-        Color.White.copy(alpha = 0.55f)
+        Color.White.copy(alpha = 0.97f),
+        Color.White.copy(alpha = 0.90f)
     )
 )
 
