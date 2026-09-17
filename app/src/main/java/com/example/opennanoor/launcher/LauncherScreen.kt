@@ -732,7 +732,16 @@ fun LauncherScreen(
                 modifier = Modifier
                     .weight(1f)
                     .onGloballyPositioned { pagerSizePx = it.size }
-                    .pointerInput(Unit) {
+                    .pointerInput(cellWidthPx, cellHeightPx, state.columns) {
+                        // Two icon-widths in from the right edge, two icon-
+                        // heights down from the top - scales with whatever
+                        // this page's own icon size actually is (column
+                        // count, screen size) rather than a fixed dp zone
+                        // that would read as generous on one layout and
+                        // cramped on another.
+                        val iconSizePx = with(density) {
+                            pageIconSize(state.columns, cellWidthPx.toDp(), cellHeightPx.toDp()).toPx()
+                        }
                         // Which of search/Control Center a downward drag
                         // means is decided once, from where it STARTED -
                         // not re-checked as the finger moves, so a swipe
@@ -760,8 +769,8 @@ fun LauncherScreen(
                         var totalDrag = 0f
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
-                                startedInControlZone = offset.x > size.width * 0.7f &&
-                                    offset.y < 120.dp.toPx()
+                                startedInControlZone = offset.x > size.width - iconSizePx * 2 &&
+                                    offset.y < iconSizePx * 2
                                 totalDrag = 0f
                             }
                         ) { _, dragAmount ->
