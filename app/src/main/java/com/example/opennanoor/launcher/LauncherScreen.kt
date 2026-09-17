@@ -193,14 +193,6 @@ fun LauncherScreen(
     // also satisfy search's own "any downward drag" check and both would
     // try to open at once.
     var controlCenterOpen by remember { mutableStateOf(false) }
-    // The panel's own real measured footprint (see ControlCenterPanel's
-    // onBoundsMeasured) - null until it's been opened at least once, so the
-    // swipe zone below falls back to an icon-size guess for that first
-    // swipe, then switches to the panel's true bounds from then on. Once
-    // measured this doesn't go back to null on close - the panel's size
-    // doesn't change between opens, so there's nothing to lose by keeping it.
-    var controlCenterWidthPx by remember { mutableStateOf(0f) }
-    var controlCenterHeightPx by remember { mutableStateOf(0f) }
 
     // Long-pressing empty space on a page (see HomePage's own
     // onLongPressEmptySpace) opens this - Wallpaper/Widgets/Home settings,
@@ -780,34 +772,30 @@ fun LauncherScreen(
                         var totalDrag = 0f
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
-                                // Matches the panel's own REAL measured
-                                // footprint (controlCenterWidthPx/HeightPx -
-                                // see ControlCenterPanel's onBoundsMeasured)
-                                // once it's known, not a hand-tuned guess at
-                                // it - the zone is exactly where the panel
-                                // will actually appear, and stays that way
-                                // however its size changes. Before the panel
-                                // has ever been measured (before its first
-                                // open), the fallback below deliberately
-                                // uses only `size` - this pointerInput's own
-                                // measured box, valid from its very first
-                                // frame - rather than the page grid's
-                                // cellWidthPx/cellHeightPx. Those start as
-                                // rough guesses and get corrected a moment
-                                // after first layout (most noticeably right
-                                // after unlock), and this pointerInput used
-                                // to be keyed on them - a correction mid-
-                                // gesture restarted the whole gesture
-                                // detector out from under a fast swipe that
-                                // landed in that window, and it fell
-                                // through to search instead. Not keying on
-                                // them at all removes that race entirely.
-                                val zoneWidth = if (controlCenterWidthPx > 0f) controlCenterWidthPx
-                                    else size.width * CONTROL_CENTER_WIDTH_FRACTION
-                                val zoneHeight = if (controlCenterHeightPx > 0f) controlCenterHeightPx
-                                    else size.height * 0.2f
-                                startedInControlZone = offset.x > size.width - zoneWidth &&
-                                    offset.y < zoneHeight
+                                // Both dimensions are fixed constants -
+                                // CONTROL_CENTER_WIDTH_FRACTION (the same
+                                // fraction the panel itself renders at) and
+                                // CONTROL_CENTER_SWIPE_ZONE_HEIGHT - not
+                                // measured from the panel's actual rendered
+                                // size. The zone previously tracked real
+                                // measured bounds, growing to match
+                                // whatever the panel's content needed - but
+                                // that meant its own AREA moved over time as
+                                // Control Center's content changed (Now
+                                // Playing appearing, the brightness prompt
+                                // going away once granted), which is
+                                // exactly what was asked to be fixed once
+                                // and left alone. `size` here is only this
+                                // pointerInput's own measured box - valid
+                                // from its very first frame, unlike the page
+                                // grid's cellWidthPx/cellHeightPx (which
+                                // start as rough guesses corrected a moment
+                                // after first layout, most noticeably right
+                                // after unlock - keying this pointerInput on
+                                // those caused a mid-gesture restart that
+                                // dropped fast swipes; see git history).
+                                startedInControlZone = offset.x > size.width * (1f - CONTROL_CENTER_WIDTH_FRACTION) &&
+                                    offset.y < with(density) { CONTROL_CENTER_SWIPE_ZONE_HEIGHT.toPx() }
                                 totalDrag = 0f
                             }
                         ) { _, dragAmount ->
@@ -1011,24 +999,7 @@ fun LauncherScreen(
         ControlCenterPanel(
             visible = controlCenterOpen,
             insets = insets,
-            onDismiss = { controlCenterOpen = false },
-            // Only ever grows, never shrinks. The panel's own real height
-            // changes with its content (whether Now Playing has a track to
-            // show, whether the brightness permission prompt is still up) -
-            // taking whatever was measured LAST meant the swipe zone
-            // could shrink to match a smaller state the panel happened to
-            // be left in, and a swipe that looked like it landed in the
-            // same corner as always would fall outside that now-smaller
-            // zone and open search instead - "doesn't always work".
-            // Tracking the largest size ever seen keeps the zone covering
-            // everything the panel could possibly show, at the cost of
-            // covering a bit of space it isn't currently using in a
-            // smaller state - a far smaller cost than an inconsistent
-            // trigger.
-            onBoundsMeasured = { widthPx, heightPx ->
-                controlCenterWidthPx = maxOf(controlCenterWidthPx, widthPx)
-                controlCenterHeightPx = maxOf(controlCenterHeightPx, heightPx)
-            }
+            onDismiss = { controlCenterOpen = false }
         )
 
         if (showHomeMenu) {
