@@ -340,17 +340,32 @@ private fun AirplaneModeButton(modifier: Modifier = Modifier) {
             .background(if (on) controlCenterContentColor.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.05f))
             .clickable {
                 val next = !on
+                // The setting write is what actually flips the radios (the
+                // system observes AIRPLANE_MODE_ON itself) - the broadcast
+                // is only a best-effort nudge for anything else listening
+                // for the change. A non-system sender can have that
+                // broadcast silently rejected, and it used to be in the
+                // SAME runCatching as `on = next` below it - when it threw,
+                // the whole block bailed before that line ever ran, so the
+                // toggle's own local state stayed stuck at whatever it was
+                // BEFORE the very first press forever, and every press after
+                // that recomputed the same "turn it on" write again instead
+                // of alternating - "pressing again doesn't turn it back
+                // off". Splitting them means the broadcast can fail on its
+                // own without blocking the state flip that actually matters.
                 runCatching {
                     Settings.Global.putInt(
                         context.contentResolver,
                         Settings.Global.AIRPLANE_MODE_ON,
                         if (next) 1 else 0
                     )
+                }
+                runCatching {
                     context.sendBroadcast(
                         Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED).putExtra("state", next)
                     )
-                    on = next
                 }
+                on = next
             }
             .padding(vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
