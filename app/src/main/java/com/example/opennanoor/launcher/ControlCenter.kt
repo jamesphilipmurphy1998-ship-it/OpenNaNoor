@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -523,6 +525,14 @@ private fun NowPlayingRow() {
             }
         }
         Icon(
+            imageVector = Icons.Filled.SkipPrevious,
+            contentDescription = "Previous",
+            tint = controlCenterContentColor,
+            modifier = Modifier.clickable {
+                controller?.transportControls?.skipToPrevious()
+            }
+        )
+        Icon(
             imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
             contentDescription = if (playing) "Pause" else "Play",
             tint = controlCenterContentColor,
@@ -531,6 +541,14 @@ private fun NowPlayingRow() {
                     val transport = controller?.transportControls ?: return@clickable
                     if (playing) transport.pause() else transport.play()
                 }
+        )
+        Icon(
+            imageVector = Icons.Filled.SkipNext,
+            contentDescription = "Next",
+            tint = controlCenterContentColor,
+            modifier = Modifier.clickable {
+                controller?.transportControls?.skipToNext()
+            }
         )
     }
 }
