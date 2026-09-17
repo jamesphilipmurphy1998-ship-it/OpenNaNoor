@@ -40,9 +40,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AirplanemodeActive
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.ScreenLockRotation
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.Wifi
@@ -159,6 +161,10 @@ internal fun ControlCenterPanel(
                     WifiStatusButton(modifier = Modifier.weight(1f))
                     BluetoothStatusButton(modifier = Modifier.weight(1f))
                     AirplaneModeButton(modifier = Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CalculatorButton(modifier = Modifier.weight(1f))
+                    RotationLockButton(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -549,6 +555,75 @@ private fun NowPlayingRow() {
                 controller?.transportControls?.skipToNext()
             }
         )
+    }
+}
+
+/** Opens the device's default calculator app - CATEGORY_APP_CALCULATOR is
+ *  the standard way to ask Android to resolve to whichever one that is,
+ *  same as a hardware calculator key would, rather than hardcoding a
+ *  specific package that may not even be installed on this device. */
+@Composable
+private fun CalculatorButton(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    SystemPanelButton(icon = Icons.Filled.Calculate, label = "Calculator", modifier = modifier) {
+        val intent = Intent(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_APP_CALCULATOR)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { context.startActivity(intent) }
+    }
+}
+
+/** Screen rotation lock - like brightness, one of the few things this app
+ *  can flip directly with only WRITE_SETTINGS, not a system-signature
+ *  permission. ACCELEROMETER_ROTATION is 1 when auto-rotate is on, 0 when
+ *  locked to the current orientation - the same setting the real quick
+ *  settings rotation tile flips. */
+@Composable
+private fun RotationLockButton(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val canWrite = remember { Settings.System.canWrite(context) }
+    fun readAutoRotate() = runCatching {
+        Settings.System.getInt(context.contentResolver, Settings.System.ACCELEROMETER_ROTATION)
+    }.getOrDefault(1) != 0
+    var autoRotate by remember { mutableStateOf(readAutoRotate()) }
+    DisposableEffect(context) {
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                autoRotate = readAutoRotate()
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.ACCELEROMETER_ROTATION),
+            false,
+            observer
+        )
+        onDispose { context.contentResolver.unregisterContentObserver(observer) }
+    }
+    // The tile's own icon/label reflect LOCK state (the button's purpose),
+    // not auto-rotate's raw on/off - "locked" (darkened, to match every
+    // other active tile here) is auto-rotate being OFF.
+    SystemPanelButton(
+        icon = Icons.Filled.ScreenLockRotation,
+        label = if (autoRotate) "Rotation" else "Locked",
+        modifier = modifier,
+        on = !autoRotate
+    ) {
+        if (!canWrite) {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            return@SystemPanelButton
+        }
+        runCatching {
+            Settings.System.putInt(
+                context.contentResolver,
+                Settings.System.ACCELEROMETER_ROTATION,
+                if (autoRotate) 0 else 1
+            )
+        }
     }
 }
 
