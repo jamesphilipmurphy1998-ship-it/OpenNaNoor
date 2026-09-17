@@ -91,6 +91,8 @@ fun LauncherScreen(
     onRemoveFromFolder: (folderId: String, componentId: String) -> Unit,
     onRenameFolder: (folderId: String, newName: String) -> Unit,
     onUninstall: (ComponentName) -> Unit,
+    /** The tile options menu's own "Rename" - a new display-name override for [component]. */
+    onRenameApp: (component: ComponentName, label: String) -> Unit = { _, _ -> },
     onSpillAnimationDone: () -> Unit,
     // Every bound home-screen widget (see WidgetHost.kt), each with its own
     // hosted view (a plain Android View, not Compose content, since a
@@ -179,6 +181,13 @@ fun LauncherScreen(
     // onLongPressEmptySpace) opens this - Wallpaper/Widgets/Home settings,
     // the same menu Pixel Launcher's own long-press offers.
     var showHomeMenu by remember { mutableStateOf(false) }
+    // The app whose own options badge (the spanner) was just tapped, and
+    // whether its Rename dialog is currently up - null/false the rest of
+    // the time. Held here, not per-tile in HomePage, same reasoning as
+    // showHomeMenu above: the menu itself is a full-screen overlay one
+    // level up, not owned by whichever page happened to render the tile.
+    var appOptionsTarget by remember { mutableStateOf<HomeLocation.Page?>(null) }
+    var renamingApp by remember { mutableStateOf(false) }
 
     var pagerSizePx by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     // The authoritative cell measurements, reported up by whichever
@@ -704,6 +713,7 @@ fun LauncherScreen(
                         onDragMoved = ::handleDragMoved,
                         onDragEnded = ::handleDragEnded,
                         onRemove = { slot -> onRemove(pageIndex, slot) },
+                        onOpenAppOptions = { slot -> appOptionsTarget = HomeLocation.Page(pageIndex, slot) },
                         widgets = widgets,
                         onRemoveWidget = onRemoveWidget,
                         onWidgetMoved = onWidgetMoved,
@@ -873,6 +883,41 @@ fun LauncherScreen(
                 },
                 onDismiss = { showHomeMenu = false }
             )
+        }
+
+        // The app icon at appOptionsTarget, resolved fresh each state - the
+        // slot's own contents, not a copy captured when the menu opened,
+        // so a concurrent change elsewhere (unlikely, but cheap to get
+        // right) can't leave this pointing at something stale.
+        val appOptionsItem = appOptionsTarget?.let { loc ->
+            state.pages.getOrNull(loc.page)?.getOrNull(loc.slot) as? HomeItem.AppItem
+        }
+        if (appOptionsItem != null) {
+            TileOptionsMenu(
+                onRename = { renamingApp = true },
+                onRemoveFromScreen = {
+                    appOptionsTarget?.let { onRemove(it.page, it.slot) }
+                    appOptionsTarget = null
+                },
+                onUninstall = {
+                    onUninstall(appOptionsItem.entry.app.component)
+                    appOptionsTarget = null
+                },
+                onChangeImage = { /* not built yet */ },
+                onDismiss = { appOptionsTarget = null }
+            )
+            if (renamingApp) {
+                RenameFolderDialog(
+                    currentName = appOptionsItem.entry.app.label,
+                    onSave = { newLabel ->
+                        onRenameApp(appOptionsItem.entry.app.component, newLabel)
+                        renamingApp = false
+                        appOptionsTarget = null
+                    },
+                    onDismiss = { renamingApp = false },
+                    title = "Rename app"
+                )
+            }
         }
 
         state.openFolder?.let { folder ->

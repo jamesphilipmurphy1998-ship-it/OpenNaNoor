@@ -318,14 +318,17 @@ internal fun FolderOverlay(
 internal fun RenameFolderDialog(
     currentName: String,
     onSave: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Reused for an app's own rename (the tile options menu's "Rename") -
+    // only the title differs, folders keeping their own default.
+    title: String = "Rename folder"
 ) {
     var text by remember { mutableStateOf(TextFieldValue(currentName, TextRange(0, currentName.length))) }
     val focusRequester = remember { FocusRequester() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename folder") },
+        title = { Text(title) },
         text = {
             OutlinedTextField(
                 value = text,

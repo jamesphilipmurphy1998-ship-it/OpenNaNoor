@@ -150,7 +150,13 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         themed
                     }
-                    app.component to HomeItem.AppItem(LauncherEntry(app, finished))
+                    // A user-chosen display name (the options menu's own
+                    // "Rename") overrides the app's own label here, not
+                    // deeper in AppRepository - it's purely a home-screen
+                    // presentation choice, the app itself is never touched.
+                    val labelled = settings.appLabelOverride(app.component)
+                        ?.let { app.copy(label = it) } ?: app
+                    app.component to HomeItem.AppItem(LauncherEntry(labelled, finished))
                 }
 
                 fun resolve(slot: HomeSlot): HomeItem? = when (slot) {
@@ -718,6 +724,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
         _state.value = current.copy(pages = pages, dock = dock)
         persist(pages, dock)
+    }
+
+    /** Sets (or, for a blank [label], clears) an app's own display-name override - the tile options menu's "Rename". */
+    fun renameApp(component: ComponentName, label: String) {
+        settings.setAppLabelOverride(component, label)
+        refresh()
     }
 
     /** Sends the app to the system uninstall dialog and clears it from home. */

@@ -77,6 +77,13 @@ fun HomePage(
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit,
     onRemove: (slot: Int) -> Unit,
+    /** An app tile's own options badge (the spanner) was tapped - opens the
+     *  Rename/Remove from screen/Uninstall/Change image menu at the caller's
+     *  level (LauncherScreen), same as onLongPressEmptySpace's menu does,
+     *  rather than this file owning yet another full-screen overlay.
+     *  Folder tiles don't get this menu - their badge keeps removing
+     *  directly, same as before. */
+    onOpenAppOptions: (slot: Int) -> Unit = {},
     /** Every home-screen widget currently placed, on ANY page - not
      *  pre-filtered to this one, since resolving a drag that crosses onto a
      *  different page needs to see what's already there too (collision
@@ -396,8 +403,9 @@ fun HomePage(
                             RemoveBadge(
                                 onClick = { onRemoveWidget(widget.appWidgetId) },
                                 modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .offset(x = (-10).dp, y = (-10).dp)
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 10.dp, y = (-10).dp),
+                                corner = Alignment.TopEnd
                             )
                             // The resize handle - a small grip at the
                             // widget's own bottom-centre, dragged straight
@@ -734,8 +742,13 @@ fun HomePage(
                     }
                     if (editing) {
                         RemoveBadge(
-                            onClick = { onRemove(slot) },
-                            modifier = Modifier.align(Alignment.TopStart)
+                            onClick = {
+                                if (item is HomeItem.AppItem) onOpenAppOptions(slot) else onRemove(slot)
+                            },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 10.dp, y = (-10).dp),
+                            corner = Alignment.TopEnd
                         )
                     }
                 }
@@ -1127,13 +1140,26 @@ internal fun previewWidgetRow(
 private const val FOLDER_ZONE_START = 0.2f
 private const val FOLDER_ZONE_END = 0.8f
 
-/** The small circled spanner that takes an item off the home screen -
- *  same badge, same circle size, as the plain minus it used to be. */
+/**
+ * The small circled spanner that takes an item off the home screen - same
+ * badge, same circle size, as the plain minus it used to be. [corner] picks
+ * which side its own inward padding leans toward - the caller's own
+ * `Modifier.align(...)` still does the actual corner placement; this only
+ * needs to agree with it on which edge to hang slightly inside of, or it
+ * pushes the wrong way and ends up hanging entirely outside the tile.
+ */
 @Composable
-internal fun RemoveBadge(onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun RemoveBadge(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    corner: Alignment = Alignment.TopStart
+) {
     Box(
         modifier
-            .padding(start = 18.dp, top = 2.dp)
+            .then(
+                if (corner == Alignment.TopEnd) Modifier.padding(end = 18.dp, top = 2.dp)
+                else Modifier.padding(start = 18.dp, top = 2.dp)
+            )
             .size(22.dp)
             .clip(CircleShape)
             .background(Color(0xFF3A3A3C))

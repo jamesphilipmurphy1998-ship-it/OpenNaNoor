@@ -1,7 +1,9 @@
 package com.example.opennanoor.core
 
+import android.content.ComponentName
 import android.content.Context
 import androidx.core.content.edit
+import org.json.JSONObject
 
 /** One widget's persisted spot: which page it's on, which row it starts at,
  *  and how many rows tall it is - resizable per-widget, see WidgetHost.kt's
@@ -77,6 +79,38 @@ class Settings(context: Context) {
             )
         }
 
+    /**
+     * A user-chosen display name for one app, overriding its own label - set
+     * via the tile options menu's "Rename". Stored as flattened component
+     * string -> label JSON (not the same comma-joined format everything
+     * else here uses - a user-typed label can itself contain a comma) so an
+     * arbitrary name never corrupts the format.
+     */
+    private var appLabelOverridesRaw: Map<String, String>
+        get() {
+            val raw = prefs.getString(KEY_APP_LABEL_OVERRIDES, null) ?: return emptyMap()
+            return runCatching {
+                val json = JSONObject(raw)
+                json.keys().asSequence().associateWith { json.getString(it) }
+            }.getOrDefault(emptyMap())
+        }
+        set(value) = prefs.edit {
+            putString(KEY_APP_LABEL_OVERRIDES, JSONObject(value as Map<*, *>).toString())
+        }
+
+    fun appLabelOverride(component: ComponentName): String? =
+        appLabelOverridesRaw[component.flattenToString()]
+
+    /** Sets (or, for a blank/null [label], clears) [component]'s display-name override. */
+    fun setAppLabelOverride(component: ComponentName, label: String?) {
+        val key = component.flattenToString()
+        appLabelOverridesRaw = if (label.isNullOrBlank()) {
+            appLabelOverridesRaw - key
+        } else {
+            appLabelOverridesRaw + (key to label)
+        }
+    }
+
     private companion object {
         const val KEY_ICON_PACK = "icon_pack"
         const val KEY_COLUMNS = "columns"
@@ -85,5 +119,6 @@ class Settings(context: Context) {
         const val KEY_RECENT_APPS = "recent_apps"
         const val KEY_WIDGET_PLACEMENTS = "widget_placements"
         const val DEFAULT_WIDGET_ROW_SPAN = 2
+        const val KEY_APP_LABEL_OVERRIDES = "app_label_overrides"
     }
 }
