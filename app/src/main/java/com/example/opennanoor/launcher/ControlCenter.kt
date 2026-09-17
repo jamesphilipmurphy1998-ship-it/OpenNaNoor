@@ -250,9 +250,21 @@ private fun ToggleTile(
 private fun BrightnessSlider() {
     val context = LocalContext.current
     var canWrite by remember { mutableStateOf(Settings.System.canWrite(context)) }
-    fun readBrightness() = runCatching {
-        Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-    }.getOrDefault(128) / 255f
+    // The slider's own position is a PERCEPTUAL value, not the raw 0-255
+    // SCREEN_BRIGHTNESS index directly - brightness perception (and
+    // Android's own brightness curve) isn't linear against that raw index,
+    // so a plain linear mapping left the low end of the slider still
+    // visibly bright - "lowest" wasn't actually low. Squaring on the way
+    // out (and square-rooting on the way back in) approximates that curve:
+    // raw = perceptual^2 * 255, so the bottom of the slider's travel maps
+    // to a much smaller raw value than the middle does, instead of both
+    // being equally far apart in raw terms.
+    fun readBrightness(): Float {
+        val raw = runCatching {
+            Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+        }.getOrDefault(128)
+        return kotlin.math.sqrt(raw / 255f)
+    }
     var value by remember { mutableFloatStateOf(readBrightness()) }
     DisposableEffect(context) {
         val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
@@ -283,7 +295,7 @@ private fun BrightnessSlider() {
                         Settings.System.putInt(
                             context.contentResolver,
                             Settings.System.SCREEN_BRIGHTNESS,
-                            (it * 255).toInt().coerceIn(1, 255)
+                            (it * it * 255).toInt().coerceIn(1, 255)
                         )
                     }
                 },
