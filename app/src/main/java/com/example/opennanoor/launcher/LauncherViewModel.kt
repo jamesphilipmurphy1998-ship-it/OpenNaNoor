@@ -41,6 +41,46 @@ data class SpillEvent(val item: HomeItem, val fromPage: Int)
  */
 internal fun pageCapacity(columns: Int, rows: Int): Int = (columns * rows).coerceAtLeast(1)
 
+/** How many rows tall each individual home-screen widget's own band is. */
+internal const val WIDGET_RESERVED_ROWS = 2
+
+/**
+ * Same as [pageCapacity], but reduced by however many widgets are on THIS
+ * specific page ([widgetCount] - the caller's job to look up per page, see
+ * widgetCountByPage below). The single formula every widget-aware capacity
+ * decision (chunking icons into pages, rejecting an insert that would
+ * overflow one, and the UI-layer hit-testing in HomePage/LauncherScreen) is
+ * computed from, so they can't drift out of sync with each other the way
+ * separately-written copies of this same adjustment could.
+ */
+internal fun pageCapacityFor(pageIndex: Int, columns: Int, rows: Int, widgetCount: Int): Int {
+    val reservedRows = widgetCount * WIDGET_RESERVED_ROWS
+    return (pageCapacity(columns, rows) - columns * reservedRows).coerceAtLeast(1)
+}
+
+/**
+ * Chunks a flat list of icons into pages, respecting each page's own
+ * reduced capacity per [widgetCountByPage] (a page absent from the map has
+ * no widgets, full capacity) - fills each page up to its own capacity
+ * before spilling into the next, rather than chunking every page at one
+ * flat size the way a plain List.chunked() would.
+ */
+internal fun chunkIntoPages(
+    items: List<HomeItem>, columns: Int, rows: Int, widgetCountByPage: Map<Int, Int>
+): List<List<HomeItem>> {
+    if (items.isEmpty()) return emptyList()
+    val pages = mutableListOf<List<HomeItem>>()
+    var remaining = items
+    var pageIndex = 0
+    while (remaining.isNotEmpty()) {
+        val capacity = pageCapacityFor(pageIndex, columns, rows, widgetCountByPage[pageIndex] ?: 0)
+        pages += remaining.take(capacity)
+        remaining = remaining.drop(capacity)
+        pageIndex++
+    }
+    return pages
+}
+
 data class LauncherUiState(
     val pages: List<List<HomeItem>> = emptyList(),
     val dock: List<HomeItem> = emptyList(),
@@ -51,6 +91,12 @@ data class LauncherUiState(
     val iosStyle: Boolean = false,
     val columns: Int = 4,
     val rows: Int = HomeLayout.ROWS_PER_PAGE,
+    // How many home-screen widgets (see WidgetHost.kt) are on each page -
+    // pages absent from this map have none. Each reserves WIDGET_RESERVED_
+    // ROWS on its own page; the icon grid there needs this to leave that
+    // much space alone rather than covering it - see pageCapacityFor,
+    // WIDGET_RESERVED_ROWS, and HomePage's own toDisplayY/toGridY.
+    val widgetCountByPage: Map<Int, Int> = emptyMap(),
     val openFolderId: String? = null,
     val spillEvent: SpillEvent? = null,
     val loading: Boolean = true
@@ -145,15 +191,18 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 // it (see refreshSettingsIfChanged), which doesn't always
                 // fire on the very next resume (e.g. one where packChanged
                 // is also true takes the full-refresh path instead).
-                val pages = (resolvedPages.flatten() + unplaced.mapNotNull { icons[it] })
-                    .chunked(pageCapacity(columns, rows))
+                val widgetCountByPage = settings.widgetPlacements.groupingBy { it.page }.eachCount()
+                val pages = chunkIntoPages(
+                    resolvedPages.flatten() + unplaced.mapNotNull { icons[it] }, columns, rows, widgetCountByPage
+                )
 
                 Loaded(
                     pages = pages.ifEmpty { listOf(emptyList()) },
                     dock = resolvedDock,
                     allApps = apps.mapNotNull { icons[it.component] },
                     packs = packs,
-                    packActive = pack != null
+                    packActive = pack != null,
+                    widgetCountByPage = widgetCountByPage
                 )
             }
             _state.value = LauncherUiState(
@@ -166,6 +215,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                 iosStyle = ios,
                 columns = columns,
                 rows = rows,
+                widgetCountByPage = result.widgetCountByPage,
                 openFolderId = _state.value.openFolderId,
                 loading = false
             )
@@ -223,20 +273,27 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val current = _state.value
         val newColumns = settings.columns
         val newRows = settings.rows
+        val newWidgetCountByPage = settings.widgetPlacements.groupingBy { it.page }.eachCount()
         val layoutChanged = newColumns != current.columns || newRows != current.rows
+        val widgetChanged = newWidgetCountByPage != current.widgetCountByPage
         when {
             packChanged || iosChanged -> refresh()
-            layoutChanged -> {
-                // A smaller grid can't hold as many icons per page as before -
-                // reflow every icon (folders kept whole) into pages sized for
-                // the new capacity, in the same order they were already in,
+            layoutChanged || widgetChanged -> {
+                // A smaller grid (or a widget newly claiming a page's top
+                // rows) can't hold as many icons per page as before - reflow
+                // every icon (folders kept whole) into pages sized for the
+                // new capacity, in the same order they were already in,
                 // rather than letting a shrunk page silently overflow or a
                 // grown one leave gaps that used to be filled by icons pushed
                 // onto the next page.
-                val reflowed = current.pages.flatten()
-                    .chunked(pageCapacity(newColumns, newRows))
+                val reflowed = chunkIntoPages(current.pages.flatten(), newColumns, newRows, newWidgetCountByPage)
                     .ifEmpty { listOf(emptyList()) }
-                _state.value = current.copy(pages = reflowed, columns = newColumns, rows = newRows)
+                _state.value = current.copy(
+                    pages = reflowed,
+                    columns = newColumns,
+                    rows = newRows,
+                    widgetCountByPage = newWidgetCountByPage
+                )
                 persist(reflowed, current.dock)
             }
         }
@@ -271,8 +328,31 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
                     ?: return
         }
 
+        // A fold target's slot (see armedTarget/pageFoldTarget in
+        // LauncherScreen) is deliberately computed against the page's REAL,
+        // unshifted layout, so it identifies the right occupant while the
+        // finger is still hovering. But `list.removeAt(from.slot)` just
+        // above already shifted every slot after it on the SAME page down
+        // by one, in pagesWorking specifically - the list insertItem is
+        // about to read `to`'s occupant from. Left uncorrected, folding
+        // onto a target to the RIGHT of where the drag started reads
+        // targetList[to.slot] one slot too far along - whichever icon
+        // happened to be sitting one place past the intended target is
+        // what actually got folded into, not the one the drop visibly
+        // landed on. Dragging to the LEFT never hit this (nothing before
+        // the removed slot shifts), which is why only one direction ever
+        // looked wrong.
+        val adjustedTo = if (
+            fold && from is HomeLocation.Page && to is HomeLocation.Page &&
+            from.page == to.page && from.slot < to.slot
+        ) {
+            to.copy(slot = to.slot - 1)
+        } else {
+            to
+        }
+
         val spillEvent = insertItem(
-            sourceItem, to, pagesWorking, dockWorking, current.columns, current.rows, fold
+            sourceItem, adjustedTo, pagesWorking, dockWorking, current.columns, current.rows, fold, current.widgetCountByPage
         )
 
         val finalPages = pagesWorking.filterIndexed { _, page ->
@@ -336,10 +416,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         dockWorking: MutableList<HomeItem>,
         columns: Int,
         rows: Int,
-        fold: Boolean
+        fold: Boolean,
+        widgetCountByPage: Map<Int, Int>
     ): SpillEvent? {
-        val capacity = pageCapacity(columns, rows)
-
         // A folder is never a drop destination in its own right - dropping
         // onto a folder is resolved below by finding it as the occupant of a
         // page or dock slot.
@@ -415,7 +494,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         // full, rather than sitting in the current one past its own row
         // count.
         return if (destination is HomeLocation.Page) {
-            spillOverflow(destination.page, pagesWorking, capacity)
+            spillOverflow(destination.page, pagesWorking, columns, rows, widgetCountByPage)
         } else {
             null
         }
@@ -423,14 +502,17 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Bumps the last icon off [pageIndex] onto the front of the next page
-     * if it's grown past [capacity], creating that next page if there isn't
+     * if it's grown past its own (possibly widget-reduced, see
+     * [pageCapacityFor]) capacity, creating that next page if there isn't
      * one yet - and keeps cascading, since bumping one into an already-full
      * next page just moves the problem one page further along.
      */
     private fun spillOverflow(
         pageIndex: Int,
         pagesWorking: MutableList<MutableList<HomeItem>>,
-        capacity: Int
+        columns: Int,
+        rows: Int,
+        widgetCountByPage: Map<Int, Int>
     ): SpillEvent? {
         // Only the first page's departure gets a SpillEvent - a cascade
         // reaching a second or third full page in a row is rare enough,
@@ -440,6 +522,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         var index = pageIndex
         while (true) {
             val page = pagesWorking.getOrNull(index) ?: return firstSpill
+            val capacity = pageCapacityFor(index, columns, rows, widgetCountByPage[index] ?: 0)
             if (page.size <= capacity) return firstSpill
             val overflow = page.removeAt(page.lastIndex)
             if (firstSpill == null) firstSpill = SpillEvent(overflow, index)
@@ -452,22 +535,91 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Places an app dragged in from the drawer at an exact spot, using the
-     * same occupant/folder-create rules as [moveItem] - there is just no
-     * source location to remove it from first.
+     * same occupant/folder-create rules as [moveItem]. The drawer lists
+     * every installed app regardless of whether it's already placed
+     * somewhere on the home screen or in a folder, so dragging one that
+     * is relocates that existing placement here rather than silently
+     * refusing - the old behaviour (a no-op guard) looked, from the drop
+     * side, exactly like a drop that simply failed to persist: no error,
+     * no ping-back, nothing visibly happened at all.
      */
     fun placeFromDrawer(entry: LauncherEntry, to: HomeLocation, fold: Boolean = false) {
         val current = _state.value
-        if (current.contains(entry.app.component)) return
-
         val pagesWorking = current.pages.map { it.toMutableList() }.toMutableList()
         val dockWorking = current.dock.toMutableList()
+
+        // If this app is already placed on the SAME page it's being
+        // dropped onto, removing it first shifts every slot after it on
+        // that page down by one - the exact same class of bug fixed for
+        // moveItem's own fold path (see its own comment on this). `to`
+        // has to be adjusted the same way, or dropping this app back onto
+        // (or just past) where it already sat reads the wrong occupant -
+        // dropping "onto itself" in particular would otherwise duplicate
+        // it right next to itself instead of just leaving it where it was.
+        val removedFrom = if (current.contains(entry.app.component)) {
+            removeComponent(entry.app.component, pagesWorking, dockWorking)
+        } else {
+            null
+        }
+        val adjustedTo = if (
+            removedFrom is HomeLocation.Page && to is HomeLocation.Page &&
+            removedFrom.page == to.page && removedFrom.slot < to.slot
+        ) {
+            to.copy(slot = to.slot - 1)
+        } else {
+            to
+        }
+
         val spillEvent = insertItem(
-            HomeItem.AppItem(entry), to, pagesWorking, dockWorking, current.columns, current.rows, fold
+            HomeItem.AppItem(entry), adjustedTo, pagesWorking, dockWorking, current.columns, current.rows, fold, current.widgetCountByPage
         )
 
-        val finalPages = pagesWorking.ifEmpty { listOf(mutableListOf()) }
+        val finalPages = pagesWorking.filterIndexed { _, page ->
+            page.isNotEmpty() || pagesWorking.size == 1
+        }.ifEmpty { listOf(mutableListOf()) }
         _state.value = current.copy(pages = finalPages, dock = dockWorking, spillEvent = spillEvent)
         persist(finalPages, dockWorking)
+    }
+
+    /**
+     * Finds [component] wherever it currently sits - a plain slot on a
+     * page or the dock, or a member of a folder on either - and removes
+     * it there, dissolving/shrinking that folder the same way
+     * [extractFromFolder] already does. Used by [placeFromDrawer] to
+     * relocate an already-placed app rather than leaving a duplicate
+     * behind. Returns the plain page/dock slot it was removed from (not a
+     * folder membership, which doesn't shift any page's own indices the
+     * way removing a plain slot does), so the caller can correct for that
+     * shift the same way [moveItem] already does for its own fold path.
+     */
+    private fun removeComponent(
+        component: ComponentName,
+        pagesWorking: MutableList<MutableList<HomeItem>>,
+        dockWorking: MutableList<HomeItem>
+    ): HomeLocation? {
+        pagesWorking.forEachIndexed { pageIndex, page ->
+            val slot = page.indexOfFirst {
+                it is HomeItem.AppItem && it.entry.app.component == component
+            }
+            if (slot != -1) {
+                page.removeAt(slot)
+                return HomeLocation.Page(pageIndex, slot)
+            }
+        }
+        val dockSlot = dockWorking.indexOfFirst {
+            it is HomeItem.AppItem && it.entry.app.component == component
+        }
+        if (dockSlot != -1) {
+            dockWorking.removeAt(dockSlot)
+            return HomeLocation.Dock(dockSlot)
+        }
+
+        val folderId = (pagesWorking.flatten() + dockWorking)
+            .filterIsInstance<HomeItem.FolderItem>()
+            .firstOrNull { folder -> folder.items.any { it.entry.app.component == component } }
+            ?.folderId ?: return null
+        extractFromFolder(folderId, component.flattenToString(), pagesWorking, dockWorking)
+        return null
     }
 
     /** Puts an app on the home screen if it isn't already there. */
@@ -622,7 +774,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val dock: List<HomeItem>,
         val allApps: List<HomeItem.AppItem>,
         val packs: List<IconPackInfo>,
-        val packActive: Boolean
+        val packActive: Boolean,
+        val widgetCountByPage: Map<Int, Int>
     )
 
     private companion object {

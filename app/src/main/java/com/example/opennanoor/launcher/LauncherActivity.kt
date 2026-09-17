@@ -67,6 +67,8 @@ class LauncherActivity : ComponentActivity() {
                     }
                 }
 
+                val widgetHost = rememberWidgetHostController(this)
+
                 LauncherScreen(
                     state = state,
                     onLaunchApp = {
@@ -74,6 +76,17 @@ class LauncherActivity : ComponentActivity() {
                         AppRepository.launch(this, it.component)
                     },
                     onOpenSettings = { openSettings() },
+                    widgets = widgetHost.placedWidgets,
+                    onAddWidget = { widgetHost.startPick() },
+                    onRemoveWidget = { id -> widgetHost.removeWidget(id); vm.refreshSettingsIfChanged() },
+                    onWidgetMoved = { id, page, row ->
+                        widgetHost.setWidgetPlacement(id, page, row)
+                        // Moving between pages changes how many rows each of
+                        // those two pages reserves, so the icon grid has to
+                        // reflow for the new capacities - see the ViewModel's
+                        // own widgetCountByPage.
+                        vm.refreshSettingsIfChanged()
+                    },
                     drawerOpen = drawerOpen,
                     onDrawerOpenChange = { drawerOpen = it },
                     editing = editing,

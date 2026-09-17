@@ -16,6 +16,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,13 +24,18 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.geometry.Offset
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -66,6 +72,27 @@ fun HomePage(
     onDragMoved: (Offset) -> Unit,
     onDragEnded: () -> Unit,
     onRemove: (slot: Int) -> Unit,
+    /** Every home-screen widget currently placed, on ANY page - not
+     *  pre-filtered to this one, since resolving a drag that crosses onto a
+     *  different page needs to see what's already there too (collision
+     *  checking - see previewWidgetRow). This file does its own filtering
+     *  to [pageIndex] for rendering/capacity (see pageWidgets below). Each
+     *  is [WIDGET_RESERVED_ROWS] tall; icons render/drop-target in the gaps
+     *  between and around the ones on their own page (see widgetBands/
+     *  toDisplayY/toGridY). */
+    widgets: List<PlacedWidget> = emptyList(),
+    /** Unbinds one widget - wired to the same remove badge every ordinary
+     *  icon gets once [editing] is on. */
+    onRemoveWidget: (appWidgetId: Int) -> Unit = {},
+    /** A widget was dragged and released - [page]/[row] is the new
+     *  (already clamped, collision-free) page and row its own band should
+     *  start at - [page] may differ from the page it was dragged from. */
+    onWidgetMoved: (appWidgetId: Int, page: Int, row: Int) -> Unit = { _, _, _ -> },
+    /** A widget drag crossed close enough to a screen edge to flip pages -
+     *  wired to the same edge-flip machinery an icon drag already uses
+     *  (see LauncherScreen's own handleDragMoved/checkEdgeFlip), so a
+     *  widget can be dragged onto a different page the same way. */
+    onWidgetDragMoved: (Offset) -> Unit = {},
     /** Set only on the page an icon just spilled off of - see [SpillEvent]. */
     spillEvent: SpillEvent? = null,
     onSpillAnimationDone: () -> Unit = {},
@@ -87,7 +114,9 @@ fun HomePage(
     onMetrics: (cellWidthPx: Float, cellHeightPx: Float, topPaddingPx: Float) -> Unit = { _, _, _ -> },
     modifier: Modifier = Modifier
 ) {
-    BoxWithConstraints(modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier.fillMaxSize()
+    ) {
         val density = LocalDensity.current
         val cellWidth = maxWidth / columns
         val cellHeight = (maxHeight - topPadding) / rows
@@ -96,8 +125,180 @@ fun HomePage(
         val topPaddingPx = with(density) { topPadding.toPx() }
         val iconSize = pageIconSize(columns, cellWidth, cellHeight)
 
-        LaunchedEffect(cellWidthPx, cellHeightPx, topPaddingPx) {
-            onMetrics(cellWidthPx, cellHeightPx, topPaddingPx)
+        // Every widget committed to THIS page specifically - collision
+        // checks during a drag still need to see widgets on OTHER pages
+        // too (see previewWidgetRow's own callers), which is why the raw,
+        // unfiltered [widgets] param is kept around rather than filtering
+        // once at the call site in LauncherScreen.
+        val pageWidgets = widgets.filter { it.page == pageIndex }
+        val widgetHere = pageWidgets.isNotEmpty()
+        // Live preview of where the currently-dragged widget (if any, and
+        // if it started on THIS page and hasn't crossed onto another one
+        // yet - see DragCoordinator.draggingWidgetOriginPage) would land -
+        // read here via snapshotFlow same as targetOffset() below, and
+        // again, live, from drag's own fields directly in onDragEnd (see
+        // DragCoordinator's own comment on why).
+        // A function, not a val - deliberately. Reading drag.draggingWidgetId
+        // / drag.position has to happen INSIDE whatever eventually calls
+        // this (targetOffset(), itself only ever invoked from within
+        // snapshotFlow { targetOffset() }) for the live reflow to actually
+        // stay reactive - computing it once as a plain val up here would
+        // read those two State fields during regular composition instead,
+        // which snapshotFlow never sees, so a widget drag in progress would
+        // silently stop live-reflowing icons around it.
+        fun currentBands(): List<IntRange> {
+            if (pageWidgets.isEmpty()) return emptyList()
+            val draggingId = drag.draggingWidgetId
+            val draggingFromHere = draggingId != null && drag.draggingWidgetOriginPage == pageIndex
+            if (!draggingFromHere) return widgetBands(pageWidgets)
+            // Crossed onto a different page mid-drag: this page's own copy
+            // is simply gone (a ghost elsewhere shows where it's headed -
+            // see LauncherScreen's own widget ghost), so the gap it left
+            // just stays open rather than previewing a row here that isn't
+            // where the finger actually is any more.
+            return if (currentPage() != pageIndex) {
+                widgetBands(pageWidgets.filterNot { it.appWidgetId == draggingId })
+            } else {
+                widgetBands(
+                    pageWidgets,
+                    overrideId = draggingId,
+                    overrideTopRow = previewWidgetRow(
+                        pageWidgets, draggingId, drag.position.y, topPaddingPx, cellHeightPx, rows
+                    )
+                )
+            }
+        }
+
+        if (widgetHere) {
+            pageWidgets.forEach { widget ->
+                key(widget.appWidgetId) {
+                    val isDragging = widget.appWidgetId == drag.draggingWidgetId
+                    val settledY = topPaddingPx + widget.topRow * cellHeightPx
+                    // Unkeyed beyond key(appWidgetId) above, same reasoning
+                    // as every icon tile's own animatedOffset - this widget's
+                    // identity, not its current row, owns the Animatable.
+                    val animatedY = remember { Animatable(settledY) }
+                    LaunchedEffect(settledY, isDragging) {
+                        if (!isDragging) animatedY.animateTo(settledY, tween(REFLOW_ANIMATION_MS))
+                    }
+                    val angle = rememberWobble(enabled = editing, seed = -1 - widget.appWidgetId)
+                    Box(
+                        Modifier
+                            .offset {
+                                val y = if (isDragging) {
+                                    drag.position.y - (WIDGET_RESERVED_ROWS * cellHeightPx) / 2f
+                                } else {
+                                    animatedY.value
+                                }
+                                androidx.compose.ui.unit.IntOffset(0, y.toInt())
+                            }
+                            .size(
+                                width = with(density) { (columns * cellWidthPx).toDp() },
+                                height = with(density) { (WIDGET_RESERVED_ROWS * cellHeightPx).toDp() }
+                            )
+                            .graphicsLayer {
+                                rotationZ = if (isDragging) 0f else angle
+                                // Hidden once the drag has crossed onto a
+                                // different page - its content can't live
+                                // in two places at once (a real Android
+                                // View, torn down/recreated if moved to a
+                                // different page's own composition, not
+                                // something that can just be redrawn
+                                // elsewhere), so a plain ghost takes over in
+                                // LauncherScreen's own overlay instead.
+                                alpha = if (isDragging && currentPage() != pageIndex) 0f else 1f
+                            }
+                            .pointerInput(Unit) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { touch ->
+                                        onEnterEditing()
+                                        drag.draggingWidgetId = widget.appWidgetId
+                                        drag.draggingWidgetOriginPage = pageIndex
+                                        drag.position = Offset(
+                                            touch.x,
+                                            topPaddingPx + widget.topRow * cellHeightPx +
+                                                WIDGET_RESERVED_ROWS * cellHeightPx / 2f
+                                        )
+                                    },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        onWidgetDragMoved(amount)
+                                    },
+                                    onDragEnd = {
+                                        // Recomputed fresh here - reading
+                                        // drag's own fields directly, not a
+                                        // captured local - since this
+                                        // closure is fixed for the life of
+                                        // this pointerInput(Unit) and would
+                                        // otherwise only ever see whatever
+                                        // was true the first time it ran.
+                                        val finalPage = currentPage()
+                                        val destWidgets = if (finalPage == pageIndex) {
+                                            pageWidgets
+                                        } else {
+                                            widgets.filter { it.page == finalPage }
+                                        }
+                                        val finalRow = previewWidgetRow(
+                                            destWidgets, widget.appWidgetId, drag.position.y,
+                                            topPaddingPx, cellHeightPx, rows
+                                        )
+                                        drag.draggingWidgetId = null
+                                        if (finalRow != null && (finalPage != widget.page || finalRow != widget.topRow)) {
+                                            onWidgetMoved(widget.appWidgetId, finalPage, finalRow)
+                                        }
+                                    },
+                                    onDragCancel = {
+                                        drag.draggingWidgetId = null
+                                    }
+                                )
+                            }
+                    ) {
+                        // Rounding this view's corners is unresolved - see
+                        // the 2026-09-16 session notes. Every View-side
+                        // clipping technique (ViewOutlineProvider, a
+                        // wrapping FrameLayout's own outline, a raw canvas
+                        // clipPath) failed silently - one attempt's debug
+                        // fill color even painted across the ENTIRE window
+                        // instead of just this view, meaning its content
+                        // isn't drawn through the normal parent canvas at
+                        // all. Forcing Modifier.graphicsLayer's
+                        // CompositingStrategy.Offscreen DID round the
+                        // corners, but broke the widget's actual content -
+                        // it fell back to its own error/placeholder view -
+                        // even after also forcing the widget onto a plain
+                        // software layer first. Left unclipped (square
+                        // corners) since a working widget matters more than
+                        // rounded corners on a broken one.
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            factory = { widget.view },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        if (editing) {
+                            // A plain sibling positioned over the
+                            // AndroidView's own bounds (the way every icon
+                            // tile's badge sits over its own Image) never
+                            // received the tap - unlike an Image, the
+                            // widget here is a real embedded Android View
+                            // with its own native touch dispatch, which
+                            // claims a touch landing within its bounds
+                            // before Compose's own z-order hit-testing gets
+                            // to arbitrate between it and a Compose sibling
+                            // drawn on top of it. Nudging the badge to hang
+                            // mostly outside the AndroidView's own
+                            // rectangle - into the surrounding page
+                            // background, where only Compose is hit-testing
+                            // - sidesteps that entirely rather than
+                            // fighting the interop view for the touch.
+                            RemoveBadge(
+                                onClick = { onRemoveWidget(widget.appWidgetId) },
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .offset(x = (-10).dp, y = (-10).dp)
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         items.forEachIndexed { slot, item ->
@@ -120,6 +321,7 @@ fun HomePage(
             val thisLocation = HomeLocation.Page(pageIndex, slot)
 
             fun targetOffset(): Offset {
+                val bands = currentBands()
                 val display = displacedSlot(
                     slot = slot,
                     items = items,
@@ -129,7 +331,8 @@ fun HomePage(
                     currentPage = currentPage(),
                     cellWidthPx = cellWidthPx,
                     cellHeightPx = cellHeightPx,
-                    topPaddingPx = topPaddingPx
+                    topPaddingPx = topPaddingPx,
+                    bands = bands
                 )
                 // Past the last real cell (a full page previewing a drop
                 // that will push its last icon off entirely) wrapping to
@@ -140,17 +343,17 @@ fun HomePage(
                 // last column of its own row instead keeps the live preview
                 // and the actual departure animation showing the same
                 // direction throughout the whole gesture.
-                val capacity = pageCapacity(columns, rows)
+                val capacity = pageCapacityFor(pageIndex, columns, rows, pageWidgets.size)
                 if (display >= capacity) {
                     val lastRow = (capacity - 1) / columns
                     return Offset(
                         columns * cellWidthPx,
-                        topPaddingPx + lastRow * cellHeightPx
+                        toGridY(topPaddingPx + lastRow * cellHeightPx, topPaddingPx, cellHeightPx, bands)
                     )
                 }
                 return Offset(
                     (display % columns) * cellWidthPx,
-                    topPaddingPx + (display / columns) * cellHeightPx
+                    toGridY(topPaddingPx + (display / columns) * cellHeightPx, topPaddingPx, cellHeightPx, bands)
                 )
             }
 
@@ -187,7 +390,10 @@ fun HomePage(
             // appears on this page at all.
             val basePosition = remember {
                 dropped?.let { it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f) }
-                    ?: Offset((slot % columns) * cellWidthPx, topPaddingPx + (slot / columns) * cellHeightPx)
+                    ?: Offset(
+                        (slot % columns) * cellWidthPx,
+                        toGridY(topPaddingPx + (slot / columns) * cellHeightPx, topPaddingPx, cellHeightPx, currentBands())
+                    )
             }
             val animatedOffset = remember { Animatable(basePosition, Offset.VectorConverter) }
 
@@ -206,8 +412,15 @@ fun HomePage(
             // Keyed on slot (see below for why) and on whether this tile
             // currently matches a drop - not on the drop's identity, so a
             // later, different drop landing here still triggers this again
-            // even though the key(item.id) block is the same.
-            LaunchedEffect(slot, dropped != null) {
+            // even though the key(item.id) block is the same. Also keyed on
+            // widgets (structural equality - a new topRow means a new,
+            // unequal List<PlacedWidget>): targetOffset() closes over
+            // currentBands(), which reads widgets as a plain parameter, not
+            // live drag state, so without restarting here a COMMITTED
+            // widget move (drag released, ViewModel state updated) left
+            // every already-settled icon's own coroutine still computing
+            // against the OLD arrangement forever.
+            LaunchedEffect(slot, dropped != null, pageWidgets) {
                 dropped?.let {
                     animatedOffset.snapTo(it.fromPosition - Offset(cellWidthPx / 2f, cellHeightPx / 2f))
                 }
@@ -278,47 +491,68 @@ fun HomePage(
                         )
                     }
             ) {
-                // The armed-for-folder swell visual was removed here - it
-                // read drag state (hoverTarget/folderArmed) as a composition
-                // parameter, which recomposed this tile grid on every hover
-                // change and disrupted whichever tile's gesture was live, the
-                // same way the ghost's position once did. The dwell-to-fold
-                // behaviour itself is unaffected - it's gated at drop time in
-                // LauncherScreen, not here.
+                // Computed here, once, rather than inside HomeItemTile as
+                // before - the remove badge needs to wobble as ONE rigid
+                // body together with the icon, rotating around the same
+                // shared centre, or it stayed visually pinned to this
+                // cell's true top-left corner while the icon span underneath
+                // it, drifting away from the icon's own rotated corner
+                // instead of following it.
+                val angle = rememberWobble(enabled = editing, seed = slot)
                 Box(
                     Modifier
                         .fillMaxSize()
                         .graphicsLayer {
+                            rotationZ = angle
+                            // Hides the WHOLE tile - icon and remove badge
+                            // together - while this is the drag's own
+                            // origin, or while its expanded fold preview is
+                            // showing instead. This used to sit on an inner
+                            // Box wrapping only the icon, leaving the remove
+                            // badge - a sibling outside it - fully visible
+                            // and stuck at the origin cell the entire time a
+                            // drag was in flight, instead of disappearing
+                            // along with the icon it belongs to.
                             val isOrigin = drag.origin == thisLocation
-                            // Hidden while its own expanded preview shows -
-                            // whether it's an existing folder, or a plain
-                            // app about to become one (the preview now
-                            // covers both).
                             val isExpanded = drag.folderArmed &&
                                 drag.armedTarget == thisLocation
                             alpha = if (isOrigin || isExpanded) 0f else 1f
-                        },
-                    contentAlignment = Alignment.Center
+                        }
                 ) {
-                    HomeItemTile(
-                        item = item,
-                        // Arranging blocks launching an app by accident,
-                        // but a folder should still open - you can rearrange
-                        // or pull things out of it the same way, its
-                        // contents just wobble too, matching iOS.
-                        onClick = {
-                            if (item is HomeItem.FolderItem || !editing) onLaunch(item)
-                        },
-                        wobble = editing,
-                        wobbleSeed = slot,
-                        iconSize = iconSize
-                    )
-                }
-                if (editing) {
-                    RemoveBadge(
-                        onClick = { onRemove(slot) },
-                        modifier = Modifier.align(Alignment.TopStart)
-                    )
+                    // The armed-for-folder swell visual was removed here - it
+                    // read drag state (hoverTarget/folderArmed) as a
+                    // composition parameter, which recomposed this tile grid
+                    // on every hover change and disrupted whichever tile's
+                    // gesture was live, the same way the ghost's position
+                    // once did. The dwell-to-fold behaviour itself is
+                    // unaffected - it's gated at drop time in LauncherScreen,
+                    // not here.
+                    Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        HomeItemTile(
+                            item = item,
+                            // Arranging blocks launching an app by accident,
+                            // but a folder should still open - you can rearrange
+                            // or pull things out of it the same way, its
+                            // contents just wobble too, matching iOS.
+                            onClick = {
+                                if (item is HomeItem.FolderItem || !editing) onLaunch(item)
+                            },
+                            // Rotation now applied once, above, to this whole
+                            // Box (icon and badge together) - HomeItemTile's
+                            // own wobble would double-rotate it otherwise.
+                            wobble = false,
+                            iconSize = iconSize
+                        )
+                    }
+                    if (editing) {
+                        RemoveBadge(
+                            onClick = { onRemove(slot) },
+                            modifier = Modifier.align(Alignment.TopStart)
+                        )
+                    }
                 }
             }
         } // key(item.id)
@@ -331,7 +565,7 @@ fun HomePage(
         // its neighbour, then fading out. It plays once and reports back so
         // the event doesn't linger and replay on the next unrelated drop.
         if (spillEvent != null) {
-            val capacity = pageCapacity(columns, rows)
+            val capacity = pageCapacityFor(pageIndex, columns, rows, pageWidgets.size)
             val lastSlot = capacity - 1
             // Starts exactly where the live preview left the icon, NOT at
             // the last cell. (lastSlot % columns) is columns-1 - one whole
@@ -341,10 +575,10 @@ fun HomePage(
             // the icon visibly jump a cell backwards onto the page before
             // sliding off again: "for a flash it comes back on the page
             // before going back again".
-            val ghostBase = remember(pageIndex, columns, cellWidthPx, cellHeightPx, topPaddingPx) {
+            val ghostBase = remember(pageIndex, columns, cellWidthPx, cellHeightPx, topPaddingPx, pageWidgets) {
                 Offset(
                     columns * cellWidthPx,
-                    topPaddingPx + (lastSlot / columns) * cellHeightPx
+                    toGridY(topPaddingPx + (lastSlot / columns) * cellHeightPx, topPaddingPx, cellHeightPx, currentBands())
                 )
             }
             val ghostOffset = remember(spillEvent) { Animatable(ghostBase, Offset.VectorConverter) }
@@ -399,13 +633,23 @@ private fun displacedSlot(
     currentPage: Int,
     cellWidthPx: Float,
     cellHeightPx: Float,
-    topPaddingPx: Float
+    topPaddingPx: Float,
+    bands: List<IntRange> = emptyList()
 ): Int {
     val previewing = drag.active && !drag.folderArmed &&
         !drag.overDock && !drag.overRemoveZone && currentPage == pageIndex
     if (!previewing) return slot
 
     val origin = drag.origin
+
+    // Remapped once up front so every row calculation below - this
+    // function's own, and pageFoldTarget/pageDropTarget's - can keep
+    // treating [items] as the flat, band-free list it actually is (see
+    // toDisplayY's own comment).
+    val position = Offset(
+        drag.position.x,
+        toDisplayY(drag.position.y, topPaddingPx, cellHeightPx, bands)
+    )
 
     return if (origin is HomeLocation.Page && origin.page == pageIndex) {
         // Still hovering the cell it was lifted from: leave the whole page
@@ -416,37 +660,46 @@ private fun displacedSlot(
         // the maths below reads as hovering the icon that has just closed
         // that gap, so it "holds still" there (see settle) right on top of
         // where the lifted icon used to be.
-        val column = (drag.position.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
-        val row = ((drag.position.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
+        val column = (position.x / cellWidthPx).toInt().coerceIn(0, columns - 1)
+        val row = ((position.y - topPaddingPx) / cellHeightPx).toInt().coerceAtLeast(0)
         if (row * columns + column == origin.slot) return slot
 
         // Whether this hover offers a fold is checked against the page's
         // real, unshifted layout (see pageFoldTarget) - not against the
         // shifted list the reflow below uses, which would identify the
         // wrong icon as the occupant of the cell the finger is actually
-        // over. While it does, nothing reflows at all - every tile
-        // (the fold target included) holds its own true slot. Without
-        // this, the instant the finger left its origin cell heading toward
-        // an adjacent icon, that icon would already have slid one cell
-        // over to close the gap - sliding INTO roughly where the finger
-        // started, then away from it again as the finger kept moving. The
-        // target was never still long enough under the finger to arm a
-        // fold; it read as the drag just shoving the neighbour aside
-        // instead. A fold doesn't remove a slot from the sequence (two
-        // items still end up sharing one slot), so nothing should move
-        // preemptively on its account the way an insert's gap does.
-        if (pageFoldTarget(
-                drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items, origin.slot
-            ) != null
-        ) return slot
+        // over.
+        val foldSlot = pageFoldTarget(
+            position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items, origin.slot
+        )
 
         // Carried elsewhere on this page: the item is conceptually already
         // gone from its old spot, and a gap opens at the hover point.
         val withoutDragged = if (slot > origin.slot) slot - 1 else slot
         val itemsWithoutDragged = items.filterIndexed { i, _ -> i != origin.slot }
         val target = pageDropTarget(
-            drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, itemsWithoutDragged
+            position, cellWidthPx, cellHeightPx, topPaddingPx, columns, itemsWithoutDragged
         )
+
+        // A fold candidate's own dwell zone (see FOLDER_ZONE_START/END) is
+        // much wider than just "the half of its cell that would insert AT
+        // it" - it also covers the half that would insert AFTER it. Freezing
+        // the whole page (no reflow at all) for the ENTIRE zone, the way
+        // this used to, meant that right half read as "maybe folding with
+        // this icon" and suppressed the gap that should have opened one
+        // slot further along - a real drop released there still inserted
+        // correctly, but nothing ever visually moved to show it, and two
+        // icons sitting either side of that overlap looked permanently
+        // glued together with no way to land anything between them. Mapping
+        // foldSlot into this same shifted space and comparing it against
+        // the gap this drop would actually use narrows the freeze down to
+        // only the sliver where they'd genuinely coincide (dropping ON the
+        // candidate, or the dwell-to-fold zone's own left half) - anywhere
+        // the gap lands one slot past the fold candidate, the icons after
+        // it correctly slide aside the same as any other insert would.
+        val foldSlotShifted = foldSlot?.let { if (it > origin.slot) it - 1 else it }
+        if (foldSlotShifted != null && foldSlotShifted == target.gap) return slot
+
         settle(withoutDragged, target)
     } else {
         // Arriving from elsewhere (another page, the dock, a folder, or the
@@ -455,9 +708,16 @@ private fun displacedSlot(
         // real, unshifted one, so pageDropTarget's own holdTarget already
         // agrees with pageFoldTarget here.
         val target = pageDropTarget(
-            drag.position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items
+            position, cellWidthPx, cellHeightPx, topPaddingPx, columns, items
         )
-        if (target.holdTarget != null) slot else settle(slot, target)
+        // See the same-page branch's own comment above on why this only
+        // freezes when the fold candidate and the actual insert gap
+        // coincide, not for its entire (much wider) dwell zone.
+        if (target.holdTarget != null && target.holdTarget == target.gap) {
+            slot
+        } else {
+            settle(slot, target)
+        }
     }
 }
 
@@ -572,8 +832,109 @@ internal fun pageFoldTarget(
 // natural "nudge onto your neighbour" gesture actually delivers, so folding
 // two adjacent icons together almost never armed - it just inserted next
 // to the target instead. 0.1 asks for less than a third of that.
-private const val FOLDER_ZONE_START = 0.1f
-private const val FOLDER_ZONE_END = 0.9f
+// Pulled back in from 0.1/0.9 - that width left almost no edge room to
+// signal "insert here, not fold" at all: since arming only needs the SAME
+// target held for FOLDER_DWELL_MS (not the finger literally frozen), the
+// ordinary few hundred ms it takes to carefully slide into position between
+// two icons was often enough, on its own, to accumulate a full dwell before
+// the finger ever left that 80%-wide zone - a fold armed as a side effect of
+// aiming carefully, not because folding was actually intended. 0.2/0.8
+// keeps most of the same forgiveness a real finger needs (see the note
+// above this was widened for) while leaving a real edge margin a plain
+// insert can still land in without brushing fold territory.
+/**
+ * A raw on-screen ("grid") y, which may fall inside or past one of several
+ * independently-placed widget bands (each [WIDGET_RESERVED_ROWS] tall, at
+ * its own topRow - see [widgetBands]), mapped down to the "display" y that
+ * the flat, band-free [HomeItem] list every drop/fold/reflow calculation
+ * already assumes it's laid out in - as if every band didn't exist and
+ * every row below each one had simply shifted up to close its gap. Gaps
+ * BETWEEN bands (unlike the bands themselves) are ordinary display rows -
+ * icons flow through them same as anywhere else. A touch that lands ON a
+ * band itself (can't happen through a widget's own pointerInput, but can
+ * through a drag arriving from elsewhere passing over one) is clamped to
+ * the last display row just above it.
+ *
+ * [bands] must be sorted ascending by start row and non-overlapping - the
+ * caller's job (see widgetBands), not re-validated here.
+ */
+internal fun toDisplayY(y: Float, topPaddingPx: Float, cellHeightPx: Float, bands: List<IntRange>): Float {
+    var shift = 0f
+    for (band in bands) {
+        val bandTopGridPx = topPaddingPx + band.first * cellHeightPx
+        val bandHeightPx = (band.last - band.first + 1) * cellHeightPx
+        if (y < bandTopGridPx) return y - shift
+        if (y < bandTopGridPx + bandHeightPx) return bandTopGridPx - shift
+        shift += bandHeightPx
+    }
+    return y - shift
+}
+
+/** The inverse of [toDisplayY] - a "display" y back to the real, on-screen
+ *  grid y, opening up a gap for every widget band wherever it currently sits. */
+internal fun toGridY(y: Float, topPaddingPx: Float, cellHeightPx: Float, bands: List<IntRange>): Float {
+    var shift = 0f
+    for (band in bands) {
+        val bandTopGridPx = topPaddingPx + band.first * cellHeightPx
+        val bandHeightPx = (band.last - band.first + 1) * cellHeightPx
+        if (y < bandTopGridPx - shift) return y + shift
+        shift += bandHeightPx
+    }
+    return y + shift
+}
+
+/**
+ * Every widget's own band as a raw grid-row range, sorted ascending and
+ * guaranteed non-overlapping - [overrideId]/[overrideTopRow] substitute one
+ * widget's committed topRow with a live drag preview (see HomePage's own
+ * widget block) without needing a second, parallel list built by hand at
+ * every call site.
+ */
+internal fun widgetBands(
+    widgets: List<PlacedWidget>,
+    overrideId: Int? = null,
+    overrideTopRow: Int? = null
+): List<IntRange> = widgets
+    .map { widget ->
+        val topRow = if (widget.appWidgetId == overrideId) overrideTopRow ?: widget.topRow else widget.topRow
+        topRow until (topRow + WIDGET_RESERVED_ROWS)
+    }
+    .sortedBy { it.first }
+
+/**
+ * Where [draggingId]'s widget would land if released right now, as a whole
+ * row - null if the finger hasn't moved it anywhere yet, or if the nearest
+ * row would overlap another widget's own (committed) band, in which case
+ * the drag simply doesn't preview a move at all rather than landing
+ * somewhere unintended. Shared by both the live reflow preview (read every
+ * frame via snapshotFlow) and the actual drop (read once, live, from
+ * DragCoordinator - see its own comment on why fields there rather than
+ * separate remembered state) so the two can never disagree about where a
+ * release actually lands.
+ */
+internal fun previewWidgetRow(
+    widgetsOnPage: List<PlacedWidget>,
+    draggingId: Int?,
+    positionY: Float,
+    topPaddingPx: Float,
+    cellHeightPx: Float,
+    rows: Int
+): Int? {
+    val maxRow = (rows - WIDGET_RESERVED_ROWS).coerceAtLeast(0)
+    val candidateRow = ((positionY - topPaddingPx) / cellHeightPx)
+        .roundToInt()
+        .coerceIn(0, maxRow)
+    val candidateRange = candidateRow until (candidateRow + WIDGET_RESERVED_ROWS)
+    val collides = widgetsOnPage.any { other ->
+        other.appWidgetId != draggingId &&
+            candidateRange.first < other.topRow + WIDGET_RESERVED_ROWS &&
+            other.topRow < candidateRange.last + 1
+    }
+    return if (collides) null else candidateRow
+}
+
+private const val FOLDER_ZONE_START = 0.2f
+private const val FOLDER_ZONE_END = 0.8f
 
 /** The small circled minus that takes an item off the home screen. */
 @Composable

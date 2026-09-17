@@ -3,6 +3,9 @@ package com.example.opennanoor.core
 import android.content.Context
 import androidx.core.content.edit
 
+/** One widget's persisted spot: which page it's on and which row it starts at. */
+data class WidgetPlacement(val appWidgetId: Int, val page: Int, val topRow: Int)
+
 /** Small persisted preferences. Deliberately plain - no DataStore ceremony yet. */
 class Settings(context: Context) {
 
@@ -41,11 +44,33 @@ class Settings(context: Context) {
             .orEmpty()
         set(value) = prefs.edit { putString(KEY_RECENT_APPS, value.joinToString(",")) }
 
+    /**
+     * Every bound home-screen widget's (AppWidgetId, page, topRow) - which
+     * page it's on and which row of it (0-indexed from the top) it starts
+     * at, each independently. "id:page:row" triples, comma-separated same
+     * as everything else here; empty means none placed. See WidgetHost.kt.
+     */
+    var widgetPlacements: List<WidgetPlacement>
+        get() = prefs.getString(KEY_WIDGET_PLACEMENTS, null)
+            ?.split(",")
+            ?.mapNotNull { entry ->
+                val parts = entry.split(":")
+                val id = parts.getOrNull(0)?.toIntOrNull()
+                val page = parts.getOrNull(1)?.toIntOrNull()
+                val row = parts.getOrNull(2)?.toIntOrNull()
+                if (id != null && page != null && row != null) WidgetPlacement(id, page, row) else null
+            }
+            .orEmpty()
+        set(value) = prefs.edit {
+            putString(KEY_WIDGET_PLACEMENTS, value.joinToString(",") { "${it.appWidgetId}:${it.page}:${it.topRow}" })
+        }
+
     private companion object {
         const val KEY_ICON_PACK = "icon_pack"
         const val KEY_COLUMNS = "columns"
         const val KEY_ROWS = "rows"
         const val KEY_IOS_STYLE = "ios_icon_style"
         const val KEY_RECENT_APPS = "recent_apps"
+        const val KEY_WIDGET_PLACEMENTS = "widget_placements"
     }
 }

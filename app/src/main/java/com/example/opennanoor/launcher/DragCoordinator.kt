@@ -55,6 +55,30 @@ class DragCoordinator {
      */
     var armedTarget by mutableStateOf<HomeLocation?>(null)
 
+    /**
+     * The id of the widget currently being dragged (see HomePage's own
+     * widget block), null the rest of the time - lives here rather than as
+     * separate remembered state closer to where it's read, so every icon's
+     * own targetOffset()-in-a-snapshotFlow closure (which already captures
+     * this DragCoordinator) can read it for a live reflow without adding a
+     * distinct captured variable of its own. An earlier version with its
+     * own remembered MutableState crashed D8 while dexing that closure
+     * (ArrayIndexOutOfBoundsException, a real R8/D8 bug tripped by the
+     * capture list finally crossing whatever internal limit it has), and
+     * reusing an already-captured object's own field sidesteps that rather
+     * than working around the compiler bug directly.
+     */
+    var draggingWidgetId by mutableStateOf<Int?>(null)
+
+    /** Which page [draggingWidgetId] started this drag on - once the pager
+     *  (see LauncherScreen's own currentPage()) shows a different page than
+     *  this, the drag has crossed pages: the widget's own inline box on its
+     *  origin page hides, and a plain ghost (not its live content - a real
+     *  widget View can't be shown in two places, or moved to a different
+     *  page's own composition, without being torn down and recreated) takes
+     *  over showing where it's headed instead. */
+    var draggingWidgetOriginPage by mutableStateOf(0)
+
     val active: Boolean get() = item != null
 
     /** True when this drag began in the drawer rather than on a home slot. */
