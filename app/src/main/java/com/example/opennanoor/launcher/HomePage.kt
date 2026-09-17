@@ -192,14 +192,19 @@ fun HomePage(
                     // as every icon tile's own animatedOffset - this widget's
                     // identity, not its current row, owns the Animatable.
                     val animatedY = remember { Animatable(settledY) }
-                    // Tracks isDragging across recompositions so the effect
-                    // below can tell "a drag on THIS widget just ended" (snap
-                    // to the release point first) apart from "settledY moved
-                    // for some other reason while this widget was never
-                    // touched" (just reflow normally from wherever it already
-                    // is) - both fire this same effect, since it's keyed on
-                    // isDragging too.
-                    val wasDragging = remember { mutableStateOf(false) }
+                    // Set synchronously, in onDragEnd below, the instant a
+                    // drag on this widget finishes - a plain snapshot write,
+                    // not a suspend Animatable.snapTo, since onDragEnd isn't
+                    // a suspend callback. Read here in preference to
+                    // animatedY.value for exactly one frame: isDragging
+                    // flips false the same instant onDragEnd sets this, but
+                    // the settle LaunchedEffect below only picks it up
+                    // asynchronously, on whatever frame Compose gets to it -
+                    // without this, that gap showed the widget's OLD
+                    // (pre-drag) animatedY value for a frame, a visible
+                    // flash back before snapping to where it was actually
+                    // released.
+                    val releaseY = remember { mutableStateOf<Float?>(null) }
                     LaunchedEffect(settledY, isDragging) {
                         if (!isDragging) {
                             // animatedY's own value is stale the instant a
@@ -212,12 +217,10 @@ fun HomePage(
                             // where the finger actually let go - the same
                             // "flies in from an angle" bug icons had before
                             // being seeded from their own drop position.
-                            if (wasDragging.value) {
-                                animatedY.snapTo(drag.position.y - drag.draggingWidgetGrabOffsetY)
-                            }
+                            releaseY.value?.let { animatedY.snapTo(it) }
+                            releaseY.value = null
                             animatedY.animateTo(settledY, tween(REFLOW_ANIMATION_MS))
                         }
-                        wasDragging.value = isDragging
                     }
                     val angle = rememberWobble(enabled = editing, seed = -1 - widget.appWidgetId)
                     Box(
@@ -235,7 +238,7 @@ fun HomePage(
                                     // starts moving.
                                     drag.position.y - drag.draggingWidgetGrabOffsetY
                                 } else {
-                                    animatedY.value
+                                    releaseY.value ?: animatedY.value
                                 }
                                 androidx.compose.ui.unit.IntOffset(0, y.toInt())
                             }
@@ -310,6 +313,15 @@ fun HomePage(
                                             drag.position.y - drag.draggingWidgetGrabOffsetY,
                                             topPaddingPx, cellHeightPx, rows
                                         )
+                                        // Set here, synchronously, before
+                                        // isDragging flips false below - see
+                                        // releaseY's own comment for why a
+                                        // plain state write here (rather
+                                        // than leaving it to the settle
+                                        // LaunchedEffect's async snapTo
+                                        // alone) is what avoids a one-frame
+                                        // flash back to the wrong spot.
+                                        releaseY.value = drag.position.y - drag.draggingWidgetGrabOffsetY
                                         drag.draggingWidgetId = null
                                         if (finalRow != null && (finalPage != widget.page || finalRow != widget.topRow)) {
                                             onWidgetMoved(widget.appWidgetId, finalPage, finalRow)
