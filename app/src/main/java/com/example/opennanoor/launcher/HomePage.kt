@@ -739,17 +739,31 @@ fun HomePage(
                             wobble = false,
                             iconSize = iconSize
                         )
-                    }
-                    if (editing) {
-                        RemoveBadge(
-                            onClick = {
-                                if (item is HomeItem.AppItem) onOpenAppOptions(slot) else onRemove(slot)
-                            },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .offset(x = 10.dp, y = (-10).dp),
-                            corner = Alignment.TopEnd
-                        )
+                        if (editing) {
+                            // Anchored to THIS box - sized touchTargetWidth/
+                            // Height, a fixed iconSize+20dp/+label+12dp margin
+                            // around the icon regardless of column count or
+                            // icon size - rather than the outer full cell,
+                            // which is whatever's left over after the grid
+                            // divides up the page and has no fixed
+                            // relationship to where the icon itself actually
+                            // sits. Anchoring to the cell put the badge a
+                            // layout-dependent distance from the real icon
+                            // corner - close on a cramped, many-column grid,
+                            // far away on a spacious one. This box's margin
+                            // is constant, so the same small offset lands on
+                            // the icon's actual corner at every column count
+                            // and icon size.
+                            RemoveBadge(
+                                onClick = {
+                                    if (item is HomeItem.AppItem) onOpenAppOptions(slot) else onRemove(slot)
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 8.dp, y = (-8).dp),
+                                corner = Alignment.TopEnd
+                            )
+                        }
                     }
                 }
             }
@@ -898,7 +912,14 @@ private fun displacedSlot(
         val foldSlotShifted = foldSlot?.let { if (it > origin.slot) it - 1 else it }
         if (foldSlotShifted != null && foldSlotShifted == target.gap) return slot
 
-        settle(withoutDragged, target)
+        val result = settle(withoutDragged, target)
+        if (slot == withoutDragged || slot == withoutDragged + 1) {
+            android.util.Log.d(
+                "OnnHover",
+                "slot=$slot origin=${origin.slot} withoutDragged=$withoutDragged gap=${target.gap} hold=${target.holdTarget} itemsSize=${itemsWithoutDragged.size} bands=$bands pos=$position result=$result"
+            )
+        }
+        result
     } else {
         // Arriving from elsewhere (another page, the dock, a folder, or the
         // drawer): nothing has left this page, so a gap simply opens. No

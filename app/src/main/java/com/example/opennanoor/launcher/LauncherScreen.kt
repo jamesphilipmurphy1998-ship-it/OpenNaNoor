@@ -167,6 +167,16 @@ fun LauncherScreen(
     // its plain grid position, so release continues the same motion instead
     // of cutting between two different renders of the same icon.
     var justDropped by remember { mutableStateOf<JustDropped?>(null) }
+    // Guards handleDragEnded's own action (onMove/onPlaceFromDrawer/etc.)
+    // against running twice for one release. drag.end() is deferred by a
+    // frame (see its own call site) so other tiles' preview has a moment
+    // to see the real reorder before the drag preview itself turns off -
+    // but that means drag.item stays non-null, and handleDragEnded's own
+    // "if (item != null)" guard stays open, for that same extra frame. A
+    // second end-of-gesture callback landing inside that window (however
+    // it happens) would re-run the whole insert against the same item,
+    // silently duplicating it - this makes sure only the first one acts.
+    var dragEndHandled by remember { mutableStateOf(false) }
     val topPadding = 20.dp + insets.calculateTopPadding()
 
     // Dragging down anywhere on a page (not just from the very top, which
@@ -437,7 +447,8 @@ fun LauncherScreen(
             // strand the pager half-scrolled between two pages instead of
             // letting the flip it already committed to finish landing.
             val item = drag.item
-            if (item != null) {
+            if (item != null && !dragEndHandled) {
+                dragEndHandled = true
                 val dragOrigin = drag.origin
                 val target: HomeLocation = when {
                     dragOrigin is HomeLocation.Page && stillOnOriginPageCell(dragOrigin) -> dragOrigin
@@ -498,6 +509,7 @@ fun LauncherScreen(
                     drag.overRemoveZone -> {
                         if (item is HomeItem.AppItem) onUninstall(item.entry.app.component)
                         drag.end()
+                        dragEndHandled = false
                         return
                     }
                     // An already-armed fold lands on the slot it armed for,
@@ -570,11 +582,13 @@ fun LauncherScreen(
                     }
                     if (home == null) {
                         drag.end()
+                        dragEndHandled = false
                     } else {
                         scope.launch {
                             Animatable(drag.position, Offset.VectorConverter)
                                 .animateTo(home, tween(REJECT_RETURN_MS)) { drag.position = value }
                             drag.end()
+                            dragEndHandled = false
                         }
                     }
                     return
@@ -613,6 +627,7 @@ fun LauncherScreen(
             scope.launch {
                 withFrameNanos { }
                 drag.end()
+                dragEndHandled = false
             }
         }
 
