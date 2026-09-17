@@ -193,6 +193,14 @@ fun LauncherScreen(
     // also satisfy search's own "any downward drag" check and both would
     // try to open at once.
     var controlCenterOpen by remember { mutableStateOf(false) }
+    // The panel's own real measured footprint (see ControlCenterPanel's
+    // onBoundsMeasured) - null until it's been opened at least once, so the
+    // swipe zone below falls back to an icon-size guess for that first
+    // swipe, then switches to the panel's true bounds from then on. Once
+    // measured this doesn't go back to null on close - the panel's size
+    // doesn't change between opens, so there's nothing to lose by keeping it.
+    var controlCenterWidthPx by remember { mutableStateOf(0f) }
+    var controlCenterHeightPx by remember { mutableStateOf(0f) }
 
     // Long-pressing empty space on a page (see HomePage's own
     // onLongPressEmptySpace) opens this - Wallpaper/Widgets/Home settings,
@@ -769,20 +777,30 @@ fun LauncherScreen(
                         var totalDrag = 0f
                         detectVerticalDragGestures(
                             onDragStart = { offset ->
-                                // Width matches the panel's own footprint
-                                // (same CONTROL_CENTER_WIDTH_FRACTION it
-                                // draws itself at) rather than an icon-count
-                                // guess, so the trigger area is exactly
-                                // where the panel will actually appear and
-                                // stays that way if its width ever changes.
-                                // Height stays icon-size-relative - the true
-                                // top edge of the screen already belongs to
-                                // the system status bar pulldown regardless
-                                // of what this app does, so there's nothing
-                                // to gain by reaching the zone all the way
-                                // up to it.
-                                startedInControlZone = offset.x > size.width * (1f - CONTROL_CENTER_WIDTH_FRACTION) &&
-                                    offset.y < iconSizePx * 3
+                                // Matches the panel's own REAL measured
+                                // footprint (controlCenterWidthPx/HeightPx -
+                                // see ControlCenterPanel's onBoundsMeasured)
+                                // once it's known, not a hand-tuned guess at
+                                // it - the zone is exactly where the panel
+                                // will actually appear, and stays that way
+                                // however its size changes. Before the panel
+                                // has ever been measured (before its first
+                                // open) there's nothing to match yet, so
+                                // this falls back to the same icon-size
+                                // guess it always used. Height reaching the
+                                // panel's own top is fine even though that
+                                // includes some genuinely untouchable space
+                                // right at the true top edge (the system
+                                // status bar's own pulldown owns that
+                                // regardless of what this zone claims) -
+                                // it's simply unreachable in practice, not a
+                                // conflict with anything this app controls.
+                                val zoneWidth = if (controlCenterWidthPx > 0f) controlCenterWidthPx
+                                    else size.width * CONTROL_CENTER_WIDTH_FRACTION
+                                val zoneHeight = if (controlCenterHeightPx > 0f) controlCenterHeightPx
+                                    else iconSizePx * 3
+                                startedInControlZone = offset.x > size.width - zoneWidth &&
+                                    offset.y < zoneHeight
                                 totalDrag = 0f
                             }
                         ) { _, dragAmount ->
@@ -982,7 +1000,11 @@ fun LauncherScreen(
         ControlCenterPanel(
             visible = controlCenterOpen,
             insets = insets,
-            onDismiss = { controlCenterOpen = false }
+            onDismiss = { controlCenterOpen = false },
+            onBoundsMeasured = { widthPx, heightPx ->
+                controlCenterWidthPx = widthPx
+                controlCenterHeightPx = heightPx
+            }
         )
 
         if (showHomeMenu) {

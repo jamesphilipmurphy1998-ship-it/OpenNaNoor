@@ -57,6 +57,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 
@@ -84,7 +85,13 @@ private val controlCenterContentColor = Color(0xFF1C1C1E)
 internal fun ControlCenterPanel(
     visible: Boolean,
     insets: PaddingValues,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Reports the panel's own real on-screen footprint (top padding
+    // included, since that's part of "the area of the setting when it's
+    // visible" too) back up to LauncherScreen, so the swipe zone that
+    // opens this panel can be sized off its ACTUAL rendered bounds instead
+    // of a second, hand-tuned guess at them.
+    onBoundsMeasured: (widthPx: Float, heightPx: Float) -> Unit = { _, _ -> }
 ) {
     val context = LocalContext.current
     Box(Modifier.fillMaxSize()) {
@@ -110,7 +117,14 @@ internal fun ControlCenterPanel(
             visible = visible,
             enter = slideInVertically { -it } + fadeIn(),
             exit = slideOutVertically { -it } + fadeOut(),
-            modifier = Modifier.align(Alignment.TopEnd)
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                // Attached to the AnimatedVisibility wrapper, not the Column
+                // inside it - this is the box that already includes the
+                // Column's own end/top padding in its measured size, so the
+                // bounds reported here are its true full on-screen footprint,
+                // not just the space inside that padding.
+                .onGloballyPositioned { onBoundsMeasured(it.size.width.toFloat(), it.size.height.toFloat()) }
         ) {
             val shape = RoundedCornerShape(28.dp)
             Column(
