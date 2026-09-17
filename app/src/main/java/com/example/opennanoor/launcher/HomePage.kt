@@ -255,7 +255,19 @@ fun HomePage(
                                 // LauncherScreen's own overlay instead.
                                 alpha = if (isDragging && currentPage() != pageIndex) 0f else 1f
                             }
-                            .pointerInput(Unit) {
+                            // Keyed on the widget's own persisted position,
+                            // not Unit - a pointerInput never restarts on
+                            // its own once a key stays the same, so an
+                            // unkeyed one keeps running the coroutine (and
+                            // everything it captured - widget.topRow
+                            // included) from the very first time this
+                            // widget composed, forever. A widget moved once
+                            // already would still compute its NEXT grab
+                            // point off that stale, original topRow -
+                            // landing the finger on the wrong point of the
+                            // widget - instead of the one it actually has
+                            // now.
+                            .pointerInput(widget.appWidgetId, widget.page, widget.topRow) {
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = { touch ->
                                         onEnterEditing()
@@ -294,7 +306,8 @@ fun HomePage(
                                             widgets.filter { it.page == finalPage }
                                         }
                                         val finalRow = previewWidgetRow(
-                                            destWidgets, widget.appWidgetId, drag.position.y,
+                                            destWidgets, widget.appWidgetId,
+                                            drag.position.y - drag.draggingWidgetGrabOffsetY,
                                             topPaddingPx, cellHeightPx, rows
                                         )
                                         drag.draggingWidgetId = null
