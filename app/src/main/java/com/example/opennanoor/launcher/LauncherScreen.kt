@@ -213,6 +213,14 @@ fun LauncherScreen(
     // level up, not owned by whichever page happened to render the tile.
     var appOptionsTarget by remember { mutableStateOf<HomeLocation.Page?>(null) }
     var renamingApp by remember { mutableStateOf(false) }
+    // Separate from appOptionsTarget itself - the popup menu's own
+    // visibility, not "is there still an app this whole flow is about".
+    // Tapping Rename needs the popup gone but appOptionsTarget (and the
+    // appOptionsItem resolved from it) to survive so the Rename dialog
+    // that replaces it still knows which app it's renaming - collapsing
+    // both into one flag meant dismissing the popup always nulled the
+    // target out from under whichever action was about to read it.
+    var showAppOptionsMenu by remember { mutableStateOf(false) }
     // Same reasoning as appOptionsTarget above - the menu itself is a
     // full-screen overlay, not owned by whichever page's widget the
     // spanner was pressed on.
@@ -838,7 +846,10 @@ fun LauncherScreen(
                         onDragMoved = ::handleDragMoved,
                         onDragEnded = ::handleDragEnded,
                         onRemove = { slot -> onRemove(pageIndex, slot) },
-                        onOpenAppOptions = { slot -> appOptionsTarget = HomeLocation.Page(pageIndex, slot) },
+                        onOpenAppOptions = { slot ->
+                            appOptionsTarget = HomeLocation.Page(pageIndex, slot)
+                            showAppOptionsMenu = true
+                        },
                         widgets = widgets,
                         onRemoveWidget = onRemoveWidget,
                         onOpenWidgetOptions = { appWidgetId -> widgetOptionsTarget = appWidgetId },
@@ -1028,32 +1039,43 @@ fun LauncherScreen(
         val appOptionsItem = appOptionsTarget?.let { loc ->
             state.pages.getOrNull(loc.page)?.getOrNull(loc.slot) as? HomeItem.AppItem
         }
-        if (appOptionsItem != null) {
+        if (appOptionsItem != null && showAppOptionsMenu) {
             TileOptionsMenu(
-                onRename = { renamingApp = true },
+                onRename = {
+                    renamingApp = true
+                    showAppOptionsMenu = false
+                },
                 onRemoveFromScreen = {
                     appOptionsTarget?.let { onRemove(it.page, it.slot) }
                     appOptionsTarget = null
+                    showAppOptionsMenu = false
                 },
                 onUninstall = {
                     onUninstall(appOptionsItem.entry.app.component)
                     appOptionsTarget = null
+                    showAppOptionsMenu = false
                 },
                 onChangeImage = { /* not built yet */ },
-                onDismiss = { appOptionsTarget = null }
+                onDismiss = {
+                    appOptionsTarget = null
+                    showAppOptionsMenu = false
+                }
             )
-            if (renamingApp) {
-                RenameFolderDialog(
-                    currentName = appOptionsItem.entry.app.label,
-                    onSave = { newLabel ->
-                        onRenameApp(appOptionsItem.entry.app.component, newLabel)
-                        renamingApp = false
-                        appOptionsTarget = null
-                    },
-                    onDismiss = { renamingApp = false },
-                    title = "Rename app"
-                )
-            }
+        }
+        if (appOptionsItem != null && renamingApp) {
+            RenameFolderDialog(
+                currentName = appOptionsItem.entry.app.label,
+                onSave = { newLabel ->
+                    onRenameApp(appOptionsItem.entry.app.component, newLabel)
+                    renamingApp = false
+                    appOptionsTarget = null
+                },
+                onDismiss = {
+                    renamingApp = false
+                    appOptionsTarget = null
+                },
+                title = "Rename app"
+            )
         }
 
         if (widgetOptionsTarget != null) {

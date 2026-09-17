@@ -81,23 +81,21 @@ internal fun TileOptionsMenu(
     onChangeImage: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Only the action itself is called here, no separate onDismiss() on top
+    // of it - each action (in LauncherScreen) already closes the popup
+    // itself as part of its own state change (e.g. Rename flips
+    // showAppOptionsMenu off but deliberately leaves the target it still
+    // needs alone). Calling this menu's onDismiss - which unconditionally
+    // clears that target too - right after would undo exactly the state
+    // Rename still needs, and reading the same target right after it was
+    // cleared is what silently broke "Remove from screen" (and, on the
+    // widget version of this menu, "Remove widget") before this. onDismiss
+    // is still wired to PopupMenuScrim's own tap-outside-to-cancel below.
     PopupMenuScrim(onDismiss = onDismiss) {
-        HomeLongPressMenuItem("Rename") {
-            onDismiss()
-            onRename()
-        }
-        HomeLongPressMenuItem("Remove from screen") {
-            onDismiss()
-            onRemoveFromScreen()
-        }
-        HomeLongPressMenuItem("Uninstall") {
-            onDismiss()
-            onUninstall()
-        }
-        HomeLongPressMenuItem("Change image") {
-            onDismiss()
-            onChangeImage()
-        }
+        HomeLongPressMenuItem("Rename", onClick = onRename)
+        HomeLongPressMenuItem("Remove from screen", onClick = onRemoveFromScreen)
+        HomeLongPressMenuItem("Uninstall", onClick = onUninstall)
+        HomeLongPressMenuItem("Change image", onClick = onChangeImage)
     }
 }
 
@@ -112,11 +110,11 @@ internal fun WidgetOptionsMenu(
     onRemove: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    // Only the action, same reasoning as TileOptionsMenu above - onRemove
+    // itself needs to read widgetOptionsTarget in LauncherScreen before
+    // anything clears it, and onDismiss does exactly that.
     PopupMenuScrim(onDismiss = onDismiss) {
-        HomeLongPressMenuItem("Remove widget") {
-            onDismiss()
-            onRemove()
-        }
+        HomeLongPressMenuItem("Remove widget", onClick = onRemove)
     }
 }
 

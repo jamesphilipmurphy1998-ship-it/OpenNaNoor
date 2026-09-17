@@ -229,17 +229,43 @@ private fun ToggleTile(
  * system settings" special permission) needs a dedicated system screen to
  * grant, not a plain runtime dialog. Tapping the slider before that's
  * granted sends the user there instead of silently failing to move.
+ *
+ * Two things can otherwise make this slider look like it's lying:
+ *
+ * 1. Adaptive (auto) brightness. SCREEN_BRIGHTNESS is only the MANUAL
+ *    value - while adaptive brightness is on, the system's own algorithm
+ *    drives the real screen level continuously and can override a write to
+ *    that key within moments, so dragging the slider looked like it had no
+ *    real effect. Actually moving it now also force-switches
+ *    SCREEN_BRIGHTNESS_MODE to manual, the same implicit switch touching
+ *    the real hardware brightness buttons/slider makes elsewhere on stock
+ *    Android.
+ * 2. Only ever reading the current value once, when the panel first
+ *    composes - a change made anywhere else (the real quick settings,
+ *    adaptive brightness, another app) while this panel was already open
+ *    never reached the slider. A ContentObserver keeps it live for as long
+ *    as the panel is on screen.
  */
 @Composable
 private fun BrightnessSlider() {
     val context = LocalContext.current
     var canWrite by remember { mutableStateOf(Settings.System.canWrite(context)) }
-    var value by remember {
-        mutableFloatStateOf(
-            runCatching {
-                Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-            }.getOrDefault(128) / 255f
+    fun readBrightness() = runCatching {
+        Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+    }.getOrDefault(128) / 255f
+    var value by remember { mutableFloatStateOf(readBrightness()) }
+    DisposableEffect(context) {
+        val observer = object : android.database.ContentObserver(android.os.Handler(android.os.Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                value = readBrightness()
+            }
+        }
+        context.contentResolver.registerContentObserver(
+            Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS),
+            false,
+            observer
         )
+        onDispose { context.contentResolver.unregisterContentObserver(observer) }
     }
     Column(Modifier.fillMaxWidth()) {
         Text("Brightness", color = controlCenterContentColor, style = MaterialTheme.typography.bodySmall)
@@ -249,6 +275,11 @@ private fun BrightnessSlider() {
                 onValueChange = {
                     value = it
                     runCatching {
+                        Settings.System.putInt(
+                            context.contentResolver,
+                            Settings.System.SCREEN_BRIGHTNESS_MODE,
+                            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
+                        )
                         Settings.System.putInt(
                             context.contentResolver,
                             Settings.System.SCREEN_BRIGHTNESS,
