@@ -35,6 +35,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material3.Icon
 import kotlin.math.ceil
 import kotlin.math.roundToInt
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -1124,7 +1127,8 @@ internal fun previewWidgetRow(
 private const val FOLDER_ZONE_START = 0.2f
 private const val FOLDER_ZONE_END = 0.8f
 
-/** The small circled minus that takes an item off the home screen. */
+/** The small circled spanner that takes an item off the home screen -
+ *  same badge, same circle size, as the plain minus it used to be. */
 @Composable
 internal fun RemoveBadge(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Box(
@@ -1136,10 +1140,11 @@ internal fun RemoveBadge(onClick: () -> Unit, modifier: Modifier = Modifier) {
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier
-                .size(width = 11.dp, height = 2.dp)
-                .background(Color.White)
+        Icon(
+            imageVector = Icons.Filled.Build,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(13.dp)
         )
     }
 }
