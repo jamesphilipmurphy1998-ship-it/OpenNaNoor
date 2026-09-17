@@ -55,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -592,7 +593,27 @@ fun LauncherScreen(
                 if (origin != null) onMove(origin, target, fold)
                 else if (item is HomeItem.AppItem) onPlaceFromDrawer(item.entry, target, fold)
             }
-            drag.end()
+            // Deferred one frame rather than called inline. drag.active
+            // (item != null) flips synchronously, but onMove's own state
+            // update only reaches this composition a frame later via
+            // StateFlow + collectAsState (the launcher's usual one-frame
+            // lag between DragCoordinator's plain State and LauncherUiState -
+            // see the drag/animation traps memory). Every OTHER tile this
+            // drop displaced reads drag.active to decide whether to keep
+            // showing itself in the shifted, previewed slot
+            // (displacedSlot's own `previewing` check) - ending the drag
+            // immediately made that flip false one frame before the real
+            // reorder arrived, so a displaced tile briefly reverted to its
+            // OLD, pre-preview position (still the stale items list) before
+            // snapping forward again once the real state caught up - a
+            // visible flicker landing right on top of the tile that was
+            // just dropped. Waiting one frame keeps the preview alive until
+            // the real state has had a chance to replace it outright, so
+            // there's nothing to revert to in between.
+            scope.launch {
+                withFrameNanos { }
+                drag.end()
+            }
         }
 
         // Entering arranging mode is driven by drag.active rather than
