@@ -45,8 +45,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.debounce
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
@@ -445,7 +443,6 @@ fun LauncherScreen(
                 }
             }
             if (hovered != drag.hoverTarget) {
-                android.util.Log.d("OnnFold", "hoverTarget ${drag.hoverTarget} -> $hovered (origin=${drag.origin})")
                 drag.hoverTarget = hovered
                 // A momentary flicker back to null - a real finger held
                 // rock-steady through a whole dwell would still twitch a
@@ -625,7 +622,6 @@ fun LauncherScreen(
                 // that isn't something a future change to the hover logic
                 // could accidentally reintroduce.
                 val fold = drag.folderArmed && drag.armedTarget == target && target !is HomeLocation.Dock
-                android.util.Log.d("OnnFold", "DROP dragOrigin=$dragOrigin target=$target folderArmed=${drag.folderArmed} armedTarget=${drag.armedTarget} fold=$fold")
                 val origin = drag.origin
 
                 // A full dock rejects this drop outright (see insertItem) -
@@ -723,37 +719,79 @@ fun LauncherScreen(
                 .collect { active -> if (active) onEditingChange(true) }
         }
 
-        // Resting over one slot for this long arms the folder merge. The
-        // hover value is debounced first - a real finger flickers in and
-        // out of a target by a pixel or two even while trying to hold
-        // still, and reacting to every one of those as a fresh target reset
-        // the dwell countdown before it could ever finish.
+        // Resting over one slot for this long arms the folder merge.
         //
-        // Asymmetric on purpose: a genuine NEW target still debounces fast
-        // (HOVER_DEBOUNCE_MS) so the fold preview pops in promptly, but a
-        // flicker BACK TO NULL (the finger still resting on the same real
-        // target, just measured a pixel outside its zone for one frame -
-        // on-device logging caught this happening mid-dwell, well after a
-        // fold had already started counting down) gets a much longer grace
-        // period before it's treated as a real departure. Symmetric
-        // debouncing here meant that one-frame null blip cancelled
-        // `collectLatest`'s in-flight delay(FOLDER_DWELL_MS) outright - the
-        // whole countdown had to restart from zero, and often lost the race
-        // against the user actually releasing. The genuinely different
-        // target case (this cell to a DIFFERENT one) still only waits
-        // HOVER_DEBOUNCE_MS, same as before.
+        // An accumulator, not a plain debounce-then-delay: on-device
+        // logging of a real drag reaching for a target beyond the drag's
+        // own starting column showed the raw finger position genuinely
+        // overshooting past the target and pulling back - a completely
+        // normal reaching-and-correcting motion, not sensor noise - and
+        // that correction crossing back out of the fold zone for
+        // stretches approaching a full second before returning to the
+        // SAME target. A plain debounce (even an asymmetric one tolerant
+        // of brief nulls) still restarts the whole FOLDER_DWELL_MS
+        // countdown from zero on any excursion longer than its own grace
+        // window, which kept losing the race against a real user's total
+        // hold time. This instead tracks accumulated dwell time toward
+        // whichever target it's currently "stuck" to: time spent hovering
+        // it counts up, a departure only PAUSES the clock (not resets it)
+        // for up to DWELL_ABANDON_MS, and only a genuinely DIFFERENT
+        // target (or a departure that outlasts the abandon window) starts
+        // the accumulator over. Matches how iOS's own folder dwell reads
+        // as far more forgiving than a strict "hold perfectly still for
+        // one second" - because it isn't one.
         LaunchedEffect(Unit) {
-            androidx.compose.runtime.snapshotFlow { drag.hoverTarget }
-                .debounce { target -> if (target == null) NULL_HOVER_DEBOUNCE_MS else HOVER_DEBOUNCE_MS }
-                .collectLatest { target ->
-                    if (target != null) {
-                        android.util.Log.d("OnnFold", "dwell starting for $target")
-                        kotlinx.coroutines.delay(FOLDER_DWELL_MS)
-                        drag.armedTarget = target
-                        drag.folderArmed = true
-                        android.util.Log.d("OnnFold", "ARMED $target")
+            var stickyTarget: HomeLocation.Page? = null
+            var accumulatedMs = 0L
+            var departedAtMs = 0L
+            while (true) {
+                delay(DWELL_TICK_MS)
+                // This loop's own local state (stickyTarget/accumulatedMs)
+                // lives for the whole screen's lifetime, not per-drag - a
+                // drag ending resets drag.folderArmed via DragCoordinator's
+                // own end(), but nothing here knew to reset THIS loop's
+                // leftover accumulator. Without this check, the very next
+                // tick after a successful fold saw accumulatedMs still
+                // sitting at/above FOLDER_DWELL_MS from the drag that just
+                // finished, and immediately re-armed folderArmed = true
+                // again with the now-stale target - confirmed on-device:
+                // "ARMED" firing a second and third time within 50ms of an
+                // already-completed DROP, with no drag active at all. That
+                // stray re-arm is exactly what left a folder's own preview
+                // stuck open after a successful add.
+                if (!drag.active) {
+                    stickyTarget = null
+                    accumulatedMs = 0L
+                    departedAtMs = 0L
+                    continue
+                }
+                val current = drag.hoverTarget as? HomeLocation.Page
+                when {
+                    current != null && current == stickyTarget -> {
+                        accumulatedMs += DWELL_TICK_MS
+                        departedAtMs = 0L
+                    }
+                    current != null -> {
+                        stickyTarget = current
+                        accumulatedMs = DWELL_TICK_MS
+                        departedAtMs = 0L
+                    }
+                    stickyTarget != null -> {
+                        val now = System.currentTimeMillis()
+                        if (departedAtMs == 0L) {
+                            departedAtMs = now
+                        } else if (now - departedAtMs >= DWELL_ABANDON_MS) {
+                            stickyTarget = null
+                            accumulatedMs = 0L
+                            departedAtMs = 0L
+                        }
                     }
                 }
+                if (stickyTarget != null && accumulatedMs >= FOLDER_DWELL_MS && !drag.folderArmed) {
+                    drag.armedTarget = stickyTarget
+                    drag.folderArmed = true
+                }
+            }
         }
 
         // A real backdrop blur of the actual home screen - wallpaper and

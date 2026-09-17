@@ -81,10 +81,18 @@ internal const val MINI_PREVIEW_ORIGIN_Y =
 
 internal const val BLUR_RADIUS_PX = 45f
 internal const val HOVER_DEBOUNCE_MS = 80L
-/** How long a hover flickering back to null is tolerated before actually
- *  cancelling an in-progress fold dwell - see LauncherScreen's own arm
- *  LaunchedEffect for why this is longer than [HOVER_DEBOUNCE_MS]. */
-internal const val NULL_HOVER_DEBOUNCE_MS = 300L
+/** How often the fold-dwell accumulator (LauncherScreen's own arm
+ *  LaunchedEffect) samples drag.hoverTarget. */
+internal const val DWELL_TICK_MS = 50L
+/** How long a departure from the currently-accumulating fold target is
+ *  tolerated - pausing, not resetting, the dwell clock - before it's
+ *  treated as a real abandonment and the accumulator resets to zero.
+ *  Wide on purpose: on-device logging of a real drag caught a genuine
+ *  reach-and-correct overshoot keeping the finger outside the target's
+ *  fold zone for the better part of a second before settling back onto
+ *  it - normal human movement, not something to punish by losing all
+ *  progress toward the dwell. */
+internal const val DWELL_ABANDON_MS = 900L
 internal val DOCK_AREA_HEIGHT = 96.dp
 internal val GHOST_SIZE = 72.dp
 internal const val GHOST_SCALE = 1.12f

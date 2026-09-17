@@ -629,17 +629,28 @@ fun HomePage(
                 // loses track of the real target and drifts off it for
                 // whole seconds at a time (confirmed on-device: hoverTarget
                 // logs showed multi-second gaps, not single-frame jitter).
-                // An existing FOLDER is an unambiguous target (unlike an
-                // app+app pair, where the wide dwell zone deliberately
-                // needs live insert-preview elsewhere on the page - see
-                // displacedSlot's own foldSlotShifted/target.gap narrowing,
-                // and the "middle icons won't split to insert" regression
-                // from freezing that case too broadly), so pin the WHOLE
-                // page's reflow, not just this one tile, whenever the live
-                // hover target is specifically an existing folder.
-                val hoverSlot = (drag.hoverTarget as? HomeLocation.Page)?.takeIf { it.page == pageIndex }?.slot
-                val hoveringExistingFolder = hoverSlot != null && items.getOrNull(hoverSlot) is HomeItem.FolderItem
-                if (drag.hoverTarget == thisLocation || hoveringExistingFolder) {
+                // Originally scoped to an existing FOLDER only, out of
+                // worry that freezing the whole page for an app+app
+                // fold-a-new-folder candidate too would reintroduce the
+                // "middle icons won't split to insert" regression - that
+                // regression actually came from a DIFFERENT, much broader
+                // gate (displacedSlot's own `previewing` suppressed for
+                // the drag's ENTIRE duration once hovering anything
+                // fold-eligible). This freeze only ever activates while
+                // drag.hoverTarget is non-null - i.e. while the finger is
+                // GENUINELY inside a fold zone right now, the same narrow
+                // window pageDropTarget's own holdTarget already limits
+                // itself to - so widening it to cover an app+app target
+                // too doesn't carry that same risk. Without this, dragging
+                // rightward onto an adjacent plain app read as "it swaps
+                // instead of folding": the same covering-icon confusion
+                // that broke folding into an existing folder was equally
+                // capable of breaking a new-folder-creation drop, just
+                // silently falling back to a plain insert (which with only
+                // two adjacent items looks exactly like a swap) instead of
+                // outright failing to drop.
+                val hoveringFoldTarget = (drag.hoverTarget as? HomeLocation.Page)?.page == pageIndex
+                if (drag.hoverTarget == thisLocation || hoveringFoldTarget) {
                     return Offset(
                         (slot % columns) * cellWidthPx,
                         toGridY(topPaddingPx + (slot / columns) * cellHeightPx, topPaddingPx, cellHeightPx, bands)
@@ -1195,7 +1206,40 @@ internal fun pageFoldTarget(
     if (cellIndex == excludeSlot) return null
     items.getOrNull(cellIndex) ?: return null
     val withinCell = ((position.x - column * cellWidthPx) / cellWidthPx).coerceIn(0f, 1f)
-    return if (withinCell in FOLDER_ZONE_START..FOLDER_ZONE_END) cellIndex else null
+    // Direction-aware, not a single fixed zone: on-device logging of a
+    // real rightward drag onto its very next neighbour showed withinCell
+    // sitting around 0.08 for the ENTIRE hold - nowhere near
+    // FOLDER_ZONE_START (0.2) - never once dipping into fold range, while
+    // the identical drag done leftward armed immediately. That's the same
+    // ergonomic effect this file's own FOLDER_ZONE_START/END history
+    // already documents: the finger naturally stops as soon as the drag
+    // ghost visually overlaps the target's LEADING edge (whichever edge
+    // it's approaching from), not once it reaches the cell's centre - and
+    // a single symmetric zone can only ever be forgiving on one entry
+    // side at the cost of the other. excludeSlot is the drag's own
+    // origin, so its position relative to cellIndex tells us which edge
+    // is the entry edge for THIS drag: widen the zone toward that edge
+    // specifically, while keeping the opposite (exit) edge at its
+    // original bound so a plain insert-past-this-cell still has room.
+    val zoneStart: Float
+    val zoneEnd: Float
+    if (excludeSlot != null && excludeSlot < cellIndex) {
+        // Approaching from the left (a rightward drag) - the entry edge
+        // is this cell's own left edge (withinCell near 0).
+        zoneStart = FOLDER_ZONE_ENTRY_START
+        zoneEnd = FOLDER_ZONE_END
+    } else if (excludeSlot != null && excludeSlot > cellIndex) {
+        // Approaching from the right (a leftward drag) - the entry edge
+        // is this cell's own right edge (withinCell near 1).
+        zoneStart = FOLDER_ZONE_START
+        zoneEnd = FOLDER_ZONE_ENTRY_END
+    } else {
+        // Arriving from off-page (dock, drawer, another page) - no
+        // meaningful same-row approach direction to widen toward.
+        zoneStart = FOLDER_ZONE_START
+        zoneEnd = FOLDER_ZONE_END
+    }
+    return if (withinCell in zoneStart..zoneEnd) cellIndex else null
 }
 
 // Widened from an earlier 0.3/0.7. A real finger can't hold still to the
@@ -1348,6 +1392,13 @@ internal fun overlappingWidget(
 
 private const val FOLDER_ZONE_START = 0.2f
 private const val FOLDER_ZONE_END = 0.8f
+// How far pageFoldTarget widens the zone toward whichever edge the drag
+// is actually approaching FROM - see its own comment. 0.05 comfortably
+// covers the ~0.08 peak on-device logging caught for a real rightward
+// drag onto its very next neighbour (never once reaching the plain
+// FOLDER_ZONE_START of 0.2), with a small margin to spare.
+private const val FOLDER_ZONE_ENTRY_START = 0.05f
+private const val FOLDER_ZONE_ENTRY_END = 0.95f
 
 /**
  * The small circled spanner that takes an item off the home screen - same
