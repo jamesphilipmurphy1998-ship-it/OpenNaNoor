@@ -254,7 +254,31 @@ fun LauncherScreen(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = { if (editing) onEditingChange(false) },
-                onLongClick = { showHomeMenu = true }
+                // Guarded on nothing already being mid-drag - a widget's own
+                // long-press-drag detector (an unrelated pointerInput deeper
+                // in this same page) and this one both watch the same raw
+                // touch stream, and Compose doesn't make one recognizing its
+                // long-press first stop the other's independent timer from
+                // firing moments later regardless: on-device logging showed
+                // the widget's own onDragStart and this onLongClick both
+                // firing within 2ms of each other on every attempt. That
+                // race was invisible for as long as every widget's own
+                // RemoteViews had SOME native click target, which happened
+                // to consume the touch before Compose's ancestor detectors
+                // ever saw it (see ClockWidgetProvider's own history for
+                // why removing that fixed resize but broke this) - a
+                // widget with no click target of its own, like the clock
+                // widget now, exposes the race outright. By the time this
+                // callback runs, drag.draggingWidgetId/resizingWidgetId is
+                // already set if a widget's own detector won that race
+                // (it fires first per the logging above), so checking them
+                // here suppresses the losing detector's side effect without
+                // needing to change how either gesture is recognized.
+                onLongClick = {
+                    if (drag.draggingWidgetId == null && drag.resizingWidgetId == null) {
+                        showHomeMenu = true
+                    }
+                }
             )
     ) {
         val outerWidthPx = with(density) { maxWidth.toPx() }
