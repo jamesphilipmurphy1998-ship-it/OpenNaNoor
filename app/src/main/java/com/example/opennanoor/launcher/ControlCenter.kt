@@ -171,15 +171,7 @@ internal fun ControlCenterPanel(
                             Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         )
                     }
-                    SystemPanelButton(
-                        icon = Icons.Filled.AirplanemodeActive,
-                        label = "Airplane",
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        context.startActivity(
-                            Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        )
-                    }
+                    AirplaneModeButton(modifier = Modifier.weight(1f))
                 }
             }
         }
@@ -306,6 +298,66 @@ private fun BrightnessSlider() {
                     }
             )
         }
+    }
+}
+
+/**
+ * Airplane mode is the one radio Android will let a non-system app flip
+ * directly at all - but only with WRITE_SECURE_SETTINGS, a signature/system
+ * permission no runtime dialog can grant. It can still be granted by hand,
+ * once, via `adb shell pm grant <package> android.permission.WRITE_SECURE_SETTINGS`
+ * (only possible at all because the permission is declared in the
+ * manifest). Until granted, this falls back to the same "open Settings"
+ * behaviour Wi-Fi/Bluetooth use.
+ */
+@Composable
+private fun AirplaneModeButton(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val hasPermission = remember {
+        context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+    var on by remember {
+        mutableStateOf(
+            runCatching {
+                Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON) != 0
+            }.getOrDefault(false)
+        )
+    }
+
+    if (!hasPermission) {
+        SystemPanelButton(icon = Icons.Filled.AirplanemodeActive, label = "Airplane", modifier = modifier) {
+            context.startActivity(
+                Intent(Settings.ACTION_AIRPLANE_MODE_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        return
+    }
+
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (on) controlCenterContentColor.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.05f))
+            .clickable {
+                val next = !on
+                runCatching {
+                    Settings.Global.putInt(
+                        context.contentResolver,
+                        Settings.Global.AIRPLANE_MODE_ON,
+                        if (next) 1 else 0
+                    )
+                    context.sendBroadcast(
+                        Intent(Intent.ACTION_AIRPLANE_MODE_CHANGED).putExtra("state", next)
+                    )
+                    on = next
+                }
+            }
+            .padding(vertical = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Icon(Icons.Filled.AirplanemodeActive, contentDescription = null, tint = controlCenterContentColor)
+        Text("Airplane", color = controlCenterContentColor, style = MaterialTheme.typography.labelSmall)
     }
 }
 

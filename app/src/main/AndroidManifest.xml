@@ -16,6 +16,14 @@
          at all. -->
     <uses-permission android:name="android.permission.WRITE_SETTINGS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Control Center's direct airplane-mode toggle. A signature/system
+         permission - Android will never grant this through a normal
+         install or runtime dialog, only via "adb shell pm grant" run once
+         by hand. Declaring it here is what makes that grant possible at
+         all; without it, adb's own grant command fails outright. Until
+         granted, the airplane button falls back to opening Settings. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="true"
