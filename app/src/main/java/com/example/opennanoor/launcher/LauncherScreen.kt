@@ -187,6 +187,12 @@ fun LauncherScreen(
     // recomposition from elsewhere.
     var searchOpen by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    // Same downward swipe as search, but only counted as Control Center
+    // when it STARTS in the top-right corner (see the pager's own
+    // pointerInput below) - otherwise every Control Center swipe would
+    // also satisfy search's own "any downward drag" check and both would
+    // try to open at once.
+    var controlCenterOpen by remember { mutableStateOf(false) }
 
     // Long-pressing empty space on a page (see HomePage's own
     // onLongPressEmptySpace) opens this - Wallpaper/Widgets/Home settings,
@@ -727,9 +733,22 @@ fun LauncherScreen(
                     .weight(1f)
                     .onGloballyPositioned { pagerSizePx = it.size }
                     .pointerInput(Unit) {
-                        detectVerticalDragGestures { _, dragAmount ->
+                        // Which of search/Control Center a downward drag
+                        // means is decided once, from where it STARTED -
+                        // not re-checked as the finger moves, so a swipe
+                        // that began in the corner still means Control
+                        // Center even once it's dragged well outside that
+                        // zone.
+                        var startedInControlZone = false
+                        detectVerticalDragGestures(
+                            onDragStart = { offset ->
+                                startedInControlZone = offset.x > size.width * 0.7f &&
+                                    offset.y < 120.dp.toPx()
+                            }
+                        ) { _, dragAmount ->
                             when {
                                 dragAmount < -DRAWER_DRAG_THRESHOLD -> onDrawerOpenChange(true)
+                                dragAmount > SEARCH_DRAG_THRESHOLD && startedInControlZone -> controlCenterOpen = true
                                 dragAmount > SEARCH_DRAG_THRESHOLD -> searchOpen = true
                             }
                         }
@@ -917,6 +936,12 @@ fun LauncherScreen(
                 searchOpen = false
                 searchQuery = ""
             }
+        )
+
+        ControlCenterPanel(
+            visible = controlCenterOpen,
+            insets = insets,
+            onDismiss = { controlCenterOpen = false }
         )
 
         if (showHomeMenu) {

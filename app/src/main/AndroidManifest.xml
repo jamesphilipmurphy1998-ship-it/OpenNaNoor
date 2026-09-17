@@ -9,6 +9,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- Control Center's brightness slider - a "modify system settings"
+         special permission, granted through its own dedicated system
+         screen (ACTION_MANAGE_WRITE_SETTINGS) rather than a runtime
+         dialog, but it still has to be declared here to be requestable
+         at all. -->
+    <uses-permission android:name="android.permission.WRITE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:allowBackup="true"
